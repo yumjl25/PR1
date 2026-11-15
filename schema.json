@@ -1,0 +1,16 @@
+{
+    "name": "Schema 1",
+    "tuples_limit": 1000,
+    "structure": {
+        "users": {
+            "id": "int",
+            "name": "str",
+            "age": "int"
+        },
+        "logs": {
+            "id": "int",
+            "message": "str",
+            "timestamp": "time_stamp"
+        }
+    }
+}
