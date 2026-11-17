@@ -1,7 +1,7 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Iinclude
 
-SRC = src/main.cpp src/schema.cpp src/list.cpp
+SRC = src/main.cpp src/schema.cpp src/list.cpp src/hashtable.cpp
 OBJ = $(SRC:.cpp=.o)
 BIN = dbms
 
@@ -15,4 +15,3 @@ $(BIN): $(OBJ)
 
 clean:
 	rm -f $(OBJ) $(BIN)
-	rm -rf data/

@@ -146,33 +146,48 @@ bool Schema::loadFromFile(const string& filename) {
     return true;
 }
 
+
 void Schema::createDirectories() {
     string main_dir = "data/" + name;
 
-    #ifdef _WIN32
-        mkdir("data");
-        mkdir(main_dir.c_str());
-    #else
-        mkdir("data", 0777);
-        mkdir(main_dir.c_str(), 0777);
-    #endif
+#ifdef _WIN32
+    mkdir("data");
+    mkdir(main_dir.c_str());
+#else
+    mkdir("data", 0777);
+    mkdir(main_dir.c_str(), 0777);
+#endif
 
     for (int i = 0; i < collection_count; i++) {
         Collection* coll = collections[i];
-        
+
         string coll_dir = main_dir + "/" + coll->getName();
-        #ifdef _WIN32
-            mkdir(coll_dir.c_str());
-        #else
-            mkdir(coll_dir.c_str(), 0777);
-        #endif
+
+#ifdef _WIN32
+        mkdir(coll_dir.c_str());
+#else
+        mkdir(coll_dir.c_str(), 0777);
+#endif
 
         string file_path = coll_dir + "/1.json";
-        ofstream out(file_path);
-        if (out.is_open()) {
-            out << "[]" << endl;
-            out.close();
+
+        ifstream check(file_path);
+
+        if (check.is_open()) {
+            check.close();
+            cout << "File already exists: " << file_path << endl;
+        } else {
+            ofstream out(file_path);
+
+            if (out.is_open()) {
+                out.close();
+                cout << "Created: " << file_path << endl;
+            } else {
+                cerr << "Error creating: " << file_path << endl;
+            }
         }
     }
-    cout << "Database structure created in 'data/" << name << "'" << endl;
+
+    cout << "Database structure ready in '"
+         << main_dir << "'" << endl;
 }
