@@ -1,5 +1,6 @@
 #include "schema.hpp"
 #include "jsonparser.hpp"
+#include "storage.hpp"
 #include <iostream>
 
 using namespace std;
@@ -32,34 +33,22 @@ int main() {
     cout << "\nCreating filesystem structure..." << endl;
     db_schema.createDirectories();
 
-    cout << " DBMS Finished " << endl;
 
+    cout << "\n Storage Test " << endl;
 
-    cout << "\n JSON Parser Test " << endl;
+    Storage storage(&db_schema);
 
-    string testJson =
-        "{\"id\":1,\"name\":\"Alice\",\"age\":20,"
-        "\"scores\":[5,4,5],"
-        "\"address\":{\"city\":\"Moscow\"}}";
+    string json = "{\"id\":1,\"name\":\"Alice\",\"age\":20}";
 
-    JsonValue* doc = JsonParser::parse(testJson);
+    JsonValue* document = JsonParser::parse(json);
 
-    if (doc != nullptr) {
-        cout << "JSON parsed successfully!" << endl;
-
-        JsonValue* name = doc->find("name");
-
-        if (name != nullptr) {
-            cout << "Name: " << name->getValue() << endl;
-        }
-
-        cout << "Serialized JSON: "
-            << JsonParser::stringify(doc) << endl;
-
-        delete doc;
+    if (document != nullptr) {
+        storage.insertOne("users", "user_1", document);
+        delete document;
     } else {
-        cout << "JSON parsing failed!" << endl;
+        cerr << "Failed to parse document!" << endl;
     }
 
-    return 0;
+
+    cout << " DBMS Finished " << endl;
 }

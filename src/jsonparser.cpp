@@ -4,13 +4,13 @@
 
 using namespace std;
 
-void JsonParser::skipWhitespace(const std::string& json, size_t& pos){
+void JsonParser::skipWhitespace(const string& json, size_t& pos){
     while(pos < json.length() && isspace((unsigned char)json[pos])){
         pos++;
     }
 }
 
-string JsonParser::parseString(const std::string& json, size_t& pos){
+string JsonParser::parseString(const string& json, size_t& pos){
     string result = "";
     if(pos >= json.length() || json[pos] != '"'){
         return "";
@@ -45,7 +45,7 @@ string JsonParser::parseString(const std::string& json, size_t& pos){
     return "";
 }
 
-JsonValue* JsonParser::parseObject(const std::string& json, size_t& pos){
+JsonValue* JsonParser::parseObject(const string& json, size_t& pos){
     if (pos >= json.length() || json[pos] != '{') return nullptr;
     pos++;
 
