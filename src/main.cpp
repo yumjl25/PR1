@@ -38,6 +38,40 @@ int main() {
 
     Storage storage(&db_schema);
 
+
+    cout << "\n Find Test " << endl;
+
+    JsonValue* filter1 = JsonParser::parse("{}");
+
+    if (filter1 != nullptr) {
+        cout << "\nAll users:" << endl;
+        int count = storage.find("users", filter1);
+        cout << "Found: " << count << endl;
+
+        delete filter1;
+    }
+
+    JsonValue* filter2 = JsonParser::parse("{\"name\":\"Alice\"}");
+
+    if (filter2 != nullptr) {
+        cout << "\nFind Alice:" << endl;
+        int count = storage.find("users", filter2);
+        cout << "Found: " << count << endl;
+
+        delete filter2;
+    }
+
+    JsonValue* filter3 = JsonParser::parse("{\"age\":21}");
+
+    if (filter3 != nullptr) {
+        cout << "\nFind one user aged 21:" << endl;
+        bool found = storage.findOne("users", filter3);
+        cout << "Found one: " << (found ? "yes" : "no") << endl;
+
+        delete filter3;
+    }
+
+
     //string json = "{\"id\":1,\"name\":\"Alice\",\"age\":20}";
     string json = "{\"id\":2,\"name\":\"Bob\",\"age\":21}";
 
@@ -52,4 +86,29 @@ int main() {
 
 
     cout << " DBMS Finished " << endl;
+
+
+    /*cout << "\n Insert Many Test " << endl;
+
+    string manyJson =
+        "{"
+        "\"user_3\":{\"id\":3,\"name\":\"Charlie\",\"age\":22},"
+        "\"user_4\":{\"id\":4,\"name\":\"Diana\",\"age\":23},"
+        "\"user_5\":{\"id\":5,\"name\":\"Eva\",\"age\":24}"
+        "}";
+
+    JsonValue* documents = JsonParser::parse(manyJson);
+
+    if (documents != nullptr) {
+        int inserted = storage.insertMany("users", documents);
+
+        cout << "Successfully inserted: "
+            << inserted << endl;
+
+        delete documents;
+    } else {
+        cerr << "Failed to parse documents!" << endl;
+    }*/
+
 }
+

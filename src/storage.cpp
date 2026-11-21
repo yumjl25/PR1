@@ -255,3 +255,137 @@ bool Storage::insertOne(const std::string& collectionName, const std::string& ke
     }
     return true;
 }
+
+int Storage::insertMany(const string& collectionName, const JsonValue* documents){
+    if (documents == nullptr){
+        cerr << "Documents are null!" << endl;
+        return 0;
+    }
+
+    int insertedCount = 0;
+    const JsonValue* current = documents->getChild();
+
+    while(current != nullptr){
+        string key = current->getKey();
+        if (key.empty()){
+            cerr << "Document key cannot be empty!" << endl;
+        }
+        else if(insertOne(collectionName, key, current)){
+            insertedCount++;
+        }
+        current = current->getNext();
+    }
+
+    cout << "Inserted " << insertedCount << " documents." << endl;
+    return insertedCount;
+}
+
+bool Storage::matchesFilter(const JsonValue* document, const JsonValue* filter) const {
+    if (document == nullptr || document->getType() != JSON_OBJECT) return false;
+    if (filter == nullptr || filter->getType() != JSON_OBJECT) return false;
+
+    const JsonValue* condition = filter->getChild();
+    while (condition != nullptr){
+        const JsonValue* field = document->find(condition->getKey());
+
+        if (field == nullptr) return false;
+
+        if (field->getType() != condition->getType()) return false;
+
+        if (field->getType() == JSON_OBJECT || field->getType() == JSON_ARRAY){
+            if (JsonParser::stringify(field) != JsonParser::stringify(condition)){
+                return false;
+            }
+        } else {
+            if (field->getValue() != condition->getValue()){
+                return false;
+            }
+        }
+        condition = condition->getNext();
+    }
+    return true;
+}
+
+int Storage::findInternal(const string& collectionName, const JsonValue* filter, int limit) const {
+    if (schema == nullptr) return -1;
+
+    if (schema->findCollection(collectionName) == nullptr){
+        cerr << "Collection not found: " << collectionName << endl;
+        return -1;
+    }
+
+    if (filter == nullptr || filter->getType() != JSON_OBJECT){
+        cerr << "Invalid filter" << endl;
+        return -1;
+    }
+
+    int foundCount = 0;
+    int fileNumber = 1;
+
+    while (true) {
+        string filename = getFilePath(collectionName, fileNumber);
+
+        if (!fileExists(filename)){
+            break;
+        }
+
+        ifstream file(filename);
+
+        if (!file.is_open()){
+            cerr << "Cannot open file: " << filename << endl;
+            return -1;
+        }
+
+        string content = "";
+        string line;
+
+        while (getline(file, line)){
+            content += line;
+            content += '\n';
+        }
+
+        if (file.bad()){
+            cerr << "Error reading file: " << filename << endl;
+            return -1;
+        }
+
+        file.close();
+
+        if (content.empty()){
+            fileNumber++;
+            continue;
+        }
+
+        JsonValue* root = JsonParser::parse(content);
+        if (root == nullptr || root->getType() != JSON_OBJECT){
+            cerr << "Invalid storage file: " << filename << endl;
+            delete root;
+            return -1;
+        }
+
+        const JsonValue* current = root->getChild();
+        while(current != nullptr){
+            if (matchesFilter(current, filter)){
+                cout << current->getKey() << ":" << JsonParser::stringify(current) << endl;
+                foundCount++;
+                if (limit > 0 && foundCount >= limit) {
+                    delete root;
+                    return foundCount;
+                }
+            }
+            current = current->getNext();
+        }
+        delete root;
+        fileNumber++;
+    }
+    return foundCount;
+}
+
+
+int Storage::find(const string& collectionName, const JsonValue* filter) const {
+    return findInternal(collectionName, filter, 0);
+}
+
+bool Storage::findOne(const string& collectionName, const JsonValue* filter) const {
+    return findInternal(collectionName, filter, 1) == 1;
+}
