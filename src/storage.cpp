@@ -280,27 +280,30 @@ int Storage::insertMany(const string& collectionName, const JsonValue* documents
     return insertedCount;
 }
 
+
 bool Storage::matchesFilter(const JsonValue* document, const JsonValue* filter) const {
-    if (document == nullptr || document->getType() != JSON_OBJECT) return false;
-    if (filter == nullptr || filter->getType() != JSON_OBJECT) return false;
+    if (document == nullptr || filter == nullptr){
+        return false;
+    }
+
+    if (document->getType() != JSON_OBJECT || filter->getType() != JSON_OBJECT){
+        return false;
+    }
 
     const JsonValue* condition = filter->getChild();
-    while (condition != nullptr){
-        const JsonValue* field = document->find(condition->getKey());
 
-        if (field == nullptr) return false;
+    while (condition != nullptr) {
+        const JsonValue* field =
+            document->find(condition->getKey());
 
-        if (field->getType() != condition->getType()) return false;
-
-        if (field->getType() == JSON_OBJECT || field->getType() == JSON_ARRAY){
-            if (JsonParser::stringify(field) != JsonParser::stringify(condition)){
-                return false;
-            }
-        } else {
-            if (field->getValue() != condition->getValue()){
-                return false;
-            }
+        if (field == nullptr){
+            return false;
         }
+
+        if (!matchesCondition(field, condition)){
+            return false;
+        }
+
         condition = condition->getNext();
     }
     return true;
@@ -389,3 +392,113 @@ int Storage::find(const string& collectionName, const JsonValue* filter) const {
 bool Storage::findOne(const string& collectionName, const JsonValue* filter) const {
     return findInternal(collectionName, filter, 1) == 1;
 }
+
+
+bool Storage::compareValues(const JsonValue* first, const JsonValue* second, const string& op) const {
+    if (first == nullptr || second == nullptr){
+        return false;
+    }
+
+    if (first->getType() != second->getType()){
+        return false;
+    }
+
+    JsonType type = first->getType();
+
+    if (type == JSON_INT) {
+        int a = stoi(first->getValue());
+        int b = stoi(second->getValue());
+
+        if (op == "$eq") return a == b;
+        if (op == "$ne") return a != b;
+        if (op == "$gt") return a > b;
+        if (op == "$lt") return a < b;
+        if (op == "$gte") return a >= b;
+        if (op == "$lte") return a <= b;
+    }
+    else if (type == JSON_STRING) {
+        string a = first->getValue();
+        string b = second->getValue();
+
+        if (op == "$eq") return a == b;
+        if (op == "$ne") return a != b;
+        if (op == "$gt") return a > b;
+        if (op == "$lt") return a < b;
+        if (op == "$gte") return a >= b;
+        if (op == "$lte") return a <= b;
+    }
+    else if (type == JSON_NULL) {
+        if (op == "$eq") return true;
+        if (op == "$ne") return false;
+    }
+    else if (type == JSON_OBJECT || type == JSON_ARRAY) {
+        if (op == "$eq" || op == "$ne") {
+            bool equal = JsonParser::stringify(first) == JsonParser::stringify(second);
+            return op == "$eq" ? equal : !equal;
+        }
+    }
+
+    return false;
+}
+
+
+bool Storage::matchesCondition(const JsonValue* field, const JsonValue* condition) const {
+    if (field == nullptr || condition == nullptr){
+        return false;
+    }
+
+    if (condition->getType() != JSON_OBJECT){
+        return compareValues(field, condition, "$eq");
+    }
+
+    const JsonValue* opNode = condition->getChild();
+
+    if (opNode == nullptr){
+        return compareValues(field, condition, "$eq");
+    }
+
+    if (opNode->getKey()[0] != '$'){
+        return compareValues(field, condition, "$eq");
+    }
+
+    while (opNode != nullptr){
+        string op = opNode->getKey();
+
+        if (op == "$in") {
+            if (opNode->getType() != JSON_ARRAY){
+                return false;
+            }
+
+            bool found = false;
+            const JsonValue* item = opNode->getChild();
+
+            while (item != nullptr) {
+                if (compareValues(field, item, "$eq")){
+                    found = true;
+                    break;
+                }
+
+                item = item->getNext();
+            }
+
+            if (!found) return false;
+        }
+        else if (op == "$eq" || op == "$ne" ||
+                 op == "$gt" || op == "$lt" ||
+                 op == "$gte" || op == "$lte"){
+
+            if (!compareValues(field, opNode, op)){
+                return false;
+            }
+        }
+        else{
+            return false;
+        }
+
+        opNode = opNode->getNext();
+    }
+
+    return true;
+}
+
+

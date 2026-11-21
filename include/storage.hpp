@@ -22,6 +22,8 @@ private:
     bool writeFile(const std::string& filename, const std::string& content) const;
     bool matchesFilter(const JsonValue* document, const JsonValue* filter) const;
     int findInternal(const std::string& collectionName, const JsonValue* filter, int limit) const;
+    bool compareValues(const JsonValue* first, const JsonValue* second, const std::string& op) const;
+    bool matchesCondition(const JsonValue* field, const JsonValue* condition) const;
 public:
     explicit Storage(Schema* dbSchema);
     bool insertOne(const std::string& collectionName, const std::string& key, const JsonValue* document);

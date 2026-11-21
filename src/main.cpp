@@ -38,6 +38,29 @@ int main() {
 
     Storage storage(&db_schema);
 
+    cout << "\n Comparison Operators Test " << endl;
+
+    string testFilters[] = {
+        "{\"age\":{\"$gt\":21}}",
+        "{\"age\":{\"$lte\":22}}",
+        "{\"age\":{\"$ne\":21}}",
+        "{\"age\":{\"$in\":[20,22,24]}}",
+        "{\"age\":{\"$gte\":21,\"$lte\":23}}"
+    };
+
+    for (int i = 0; i < 5; i++) {
+        JsonValue* filter = JsonParser::parse(testFilters[i]);
+
+        if (filter != nullptr) {
+            cout << "\nFilter: " << testFilters[i] << endl;
+
+            int count = storage.find("users", filter);
+
+            cout << "Found: " << count << endl;
+
+            delete filter;
+        }
+    }
 
     cout << "\n Find Test " << endl;
 
