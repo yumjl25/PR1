@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <cstdio>
 
 using namespace std;
 
@@ -56,41 +57,101 @@ bool Storage::validateDocument(const Collection* collection, const JsonValue* do
     return true;
 }
 
-bool Storage::keyExists(const std::string& collectionName, const std::string& key) const {
+
+KeySearchResult Storage::keyExists(const string& collectionName, const string& key) const {
     int fileNumber = 1;
-    while(true){
+
+    while (true){
         string filename = getFilePath(collectionName, fileNumber);
-        if (!fileExists(filename)) break;
+
+        if (!fileExists(filename)){
+            break;
+        }
+
         ifstream file(filename);
+
+        if (!file.is_open()){
+            cerr << "Cannot open file: " << filename << endl;
+            return KEY_ERROR;
+        }
 
         string content = "";
         string line;
 
-        while(getline(file, line)){
+        while (getline(file, line)){
             content += line;
+            content += '\n';
+        }
+
+        if (file.bad()) {
+            cerr << "Error reading file: " << filename << endl;
+            return KEY_ERROR;
         }
 
         file.close();
 
-        if(!content.empty()){
-            JsonValue* root = JsonParser::parse(content);
-
-            if (root == nullptr || root->getType() != JSON_OBJECT){
-                delete root;
-                cerr << "Invalid storage file: " << filename << endl;
-                return true;
-            }
-
-            bool found = root->find(key) != nullptr;
-
-            delete root;
-
-            if (found) return true;
+        if (content.empty()){
+            fileNumber++;
+            continue;
         }
+
+        JsonValue* root = JsonParser::parse(content);
+
+        if (root == nullptr || root->getType() != JSON_OBJECT){
+            delete root;
+            cerr << "Invalid storage file: " << filename << endl;
+            return KEY_ERROR;
+        }
+
+        bool found = root->find(key) != nullptr;
+
+        delete root;
+
+        if (found) {
+            return KEY_FOUND;
+        }
+
         fileNumber++;
     }
-    return false;
+
+    return KEY_NOT_FOUND;
 }
+
+
+bool Storage::writeFile(const string& filename, const string& content) const {
+    string tempFilename = filename + ".tmp";
+
+    ofstream out(tempFilename, ios::binary | ios::trunc);
+
+    if (!out.is_open()){
+        cerr << "Cannot create temporary file: "
+             << tempFilename << endl;
+        return false;
+    }
+
+    out << content;
+
+    out.flush();
+
+    bool success = out.good();
+
+    out.close();
+
+    if (!success || out.fail()){
+        cerr << "Error writing temporary file!" << endl;
+        remove(tempFilename.c_str());
+        return false;
+    }
+
+    if (rename(tempFilename.c_str(), filename.c_str()) != 0){
+        cerr << "Cannot replace file: " << filename << endl;
+        remove(tempFilename.c_str());
+        return false;
+    }
+
+    return true;
+}
+
 
 bool Storage::insertOne(const std::string& collectionName, const std::string& key, const JsonValue* document){
     if (schema == nullptr || key.empty()) return false;
@@ -111,8 +172,16 @@ bool Storage::insertOne(const std::string& collectionName, const std::string& ke
         return false;
     }
 
-    if (keyExists(collectionName, key)){
+
+    KeySearchResult searchResult = keyExists(collectionName, key);
+
+    if (searchResult == KEY_FOUND){
         cerr << "Key already exists: " << key << endl;
+        return false;
+    }
+
+    if (searchResult == KEY_ERROR){
+        cerr << "Cannot insert document: storage error" << endl;
         return false;
     }
 
@@ -171,26 +240,18 @@ bool Storage::insertOne(const std::string& collectionName, const std::string& ke
 
         ofstream out(filename);
 
-        if (!out.is_open()) {
-            cerr << "Cannot write file: " << filename << endl;
-            delete root;
-            return false;
-        }
+        
+        string resultJson = JsonParser::stringify(root);
 
-        out << JsonParser::stringify(root) << endl;
-
-        bool success = out.good();
-
-        out.close();
+        bool success = writeFile(filename, resultJson);
         delete root;
-
         if (!success) {
-            cerr << "Error writing document!" << endl;
+            cerr << "Error saving document!" << endl;
             return false;
         }
-
         cout << "Document inserted successfully!" << endl;
         return true;
+
     }
-    return false;
+    return true;
 }

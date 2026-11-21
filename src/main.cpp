@@ -38,12 +38,13 @@ int main() {
 
     Storage storage(&db_schema);
 
-    string json = "{\"id\":1,\"name\":\"Alice\",\"age\":20}";
+    //string json = "{\"id\":1,\"name\":\"Alice\",\"age\":20}";
+    string json = "{\"id\":2,\"name\":\"Bob\",\"age\":21}";
 
     JsonValue* document = JsonParser::parse(json);
 
     if (document != nullptr) {
-        storage.insertOne("users", "user_1", document);
+        storage.insertOne("users", "user_2", document);
         delete document;
     } else {
         cerr << "Failed to parse document!" << endl;
