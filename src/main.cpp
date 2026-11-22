@@ -38,6 +38,38 @@ int main() {
 
     Storage storage(&db_schema);
 
+
+    cout << "\n Logical Operators Test " << endl;
+
+    string logicalFilters[] = {
+        "{\"$and\":[{\"age\":{\"$gte\":21}},{\"age\":{\"$lte\":23}}]}",
+
+        "{\"$or\":[{\"age\":20},{\"age\":24}]}",
+
+        "{\"$not\":{\"age\":{\"$gt\":22}}}",
+
+        "{\"$and\":[{\"age\":{\"$gte\":21}},"
+        "{\"$or\":[{\"name\":\"Bob\"},{\"name\":\"Eva\"}]}]}"
+    };
+
+    for (int i = 0; i < 4; i++) {
+        JsonValue* filter = JsonParser::parse(logicalFilters[i]);
+
+        if (filter != nullptr) {
+            cout << "\nFilter: " << logicalFilters[i] << endl;
+
+            int count = storage.find("users", filter);
+
+            cout << "Found: " << count << endl;
+
+            delete filter;
+        }
+        else {
+            cerr << "Failed to parse filter!" << endl;
+        }
+    }
+
+
     cout << "\n Comparison Operators Test " << endl;
 
     string testFilters[] = {

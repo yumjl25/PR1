@@ -292,18 +292,30 @@ bool Storage::matchesFilter(const JsonValue* document, const JsonValue* filter) 
 
     const JsonValue* condition = filter->getChild();
 
-    while (condition != nullptr) {
-        const JsonValue* field =
-            document->find(condition->getKey());
+    while (condition != nullptr){
+        string key = condition->getKey();
 
-        if (field == nullptr){
-            return false;
+        if (key == "$and" || key == "$or" || key == "$not"){
+            if (!matchesLogical(document, condition)) {
+                return false;
+            }
         }
+        else {
+            if (!key.empty() && key[0] == '$') {
+                cerr << "Unknown filter operator: " << key << endl;
+                return false;
+            }
 
-        if (!matchesCondition(field, condition)){
-            return false;
+            const JsonValue* field = document->find(condition->getKey());
+
+            if (field == nullptr){
+                return false;
+            }
+
+            if (!matchesCondition(field, condition)){
+                return false;
+            }
         }
-
         condition = condition->getNext();
     }
     return true;
@@ -501,4 +513,55 @@ bool Storage::matchesCondition(const JsonValue* field, const JsonValue* conditio
     return true;
 }
 
+bool Storage::matchesLogical(const JsonValue* document, const JsonValue* condition) const {
+    if (document == nullptr || condition == nullptr) return false;
+    string op = condition->getKey();
+    if (op == "$and"){
+        if (condition->getType() != JSON_ARRAY) return false;
+        const JsonValue* current = condition->getChild();
+        if (current == nullptr) return false;
+
+        while (current != nullptr){
+            if (!matchesFilter(document, current)){
+                return false;
+            }
+            current = current->getNext();
+        }
+        return true;
+    }
+
+    if (op == "$or"){
+        if (condition->getType() != JSON_ARRAY) return false;
+        const JsonValue* current = condition->getChild();
+        if (current == nullptr) return false;
+
+        while (current != nullptr){
+            if (matchesFilter(document, current)){
+                return true;
+            }
+            current = current->getNext();
+        }
+        return false;
+    }
+
+    if (op == "$not") {
+        if (condition->getType() != JSON_OBJECT) {
+            return false;
+        }
+
+        string json = JsonParser::stringify(condition);
+        JsonValue* filter = JsonParser::parse(json);
+
+        if (filter == nullptr) {
+            return false;
+        }
+
+        bool result = !matchesFilter(document, filter);
+
+        delete filter;
+        return result;
+    }
+    cerr << "Unknown logical operator: " << op << endl;
+    return false;
+}
 
