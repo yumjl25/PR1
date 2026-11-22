@@ -321,7 +321,7 @@ bool Storage::matchesFilter(const JsonValue* document, const JsonValue* filter) 
     return true;
 }
 
-int Storage::findInternal(const string& collectionName, const JsonValue* filter, int limit) const {
+int Storage::findInternal(const string& collectionName, const JsonValue* filter, int limit, const List* projection) const {
     if (schema == nullptr) return -1;
 
     if (schema->findCollection(collectionName) == nullptr){
@@ -381,7 +381,9 @@ int Storage::findInternal(const string& collectionName, const JsonValue* filter,
         const JsonValue* current = root->getChild();
         while(current != nullptr){
             if (matchesFilter(current, filter)){
-                cout << current->getKey() << ":" << JsonParser::stringify(current) << endl;
+                cout << current->getKey() << ":";
+                printDocument(current, projection);
+                cout << endl;
                 foundCount++;
                 if (limit > 0 && foundCount >= limit) {
                     delete root;
@@ -397,12 +399,16 @@ int Storage::findInternal(const string& collectionName, const JsonValue* filter,
 }
 
 
-int Storage::find(const string& collectionName, const JsonValue* filter) const {
-    return findInternal(collectionName, filter, 0);
+int Storage::find(const string& collectionName, const JsonValue* filter, int limit, const List* projection) const {
+    if (limit < 0){
+        cerr << "Invalid limit" << endl;
+        return -1;
+    }
+    return findInternal(collectionName, filter, limit, projection);
 }
 
 bool Storage::findOne(const string& collectionName, const JsonValue* filter) const {
-    return findInternal(collectionName, filter, 1) == 1;
+    return findInternal(collectionName, filter, 1, nullptr) == 1;
 }
 
 
@@ -563,5 +569,37 @@ bool Storage::matchesLogical(const JsonValue* document, const JsonValue* conditi
     }
     cerr << "Unknown logical operator: " << op << endl;
     return false;
+}
+
+void Storage::printDocument(const JsonValue* document, const List* projection) const {
+    if (document == nullptr) return;
+    if (projection == nullptr){
+        cout << JsonParser::stringify(document);
+        return;
+    }
+    cout << "{";
+    bool first = true;
+
+    for (int i = 0; i < projection->getSize(); i++){
+        string fieldName;
+        if (!projection->getAt(i, fieldName)){
+            continue;
+        }
+        
+        const JsonValue* field = document->find(fieldName);
+        if (field == nullptr) continue;
+
+        if(!first) cout << ",";
+        JsonValue* keyValue = new JsonValue();
+        keyValue->setString(fieldName);
+
+        cout << JsonParser::stringify(keyValue);
+        cout << ":";
+        cout << JsonParser::stringify(field);
+
+        delete keyValue;
+        first = false;
+    }
+    cout << "}";
 }
 

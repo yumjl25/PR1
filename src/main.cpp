@@ -39,6 +39,42 @@ int main() {
     Storage storage(&db_schema);
 
 
+    cout << "\n Limit and Projection Test " << endl;
+
+    JsonValue* filter = JsonParser::parse("{}");
+
+    if (filter != nullptr) {
+
+        cout << "\nFirst 2 users:" << endl;
+
+        int count = storage.find("users", filter, 2);
+
+        cout << "Found: " << count << endl;
+
+        List projection;
+        projection.pushTail("name");
+        projection.pushTail("age");
+
+        cout << "\nNames and ages:" << endl;
+
+        count = storage.find("users", filter, 0, &projection);
+
+        cout << "Found: " << count << endl;
+
+        cout << "\nFirst 3 names:" << endl;
+
+        List namesOnly;
+        namesOnly.pushTail("name");
+
+        count = storage.find("users", filter, 3, &namesOnly);
+
+        cout << "Found: " << count << endl;
+
+        delete filter;
+    }
+
+
+
     cout << "\n Logical Operators Test " << endl;
 
     string logicalFilters[] = {

@@ -21,14 +21,15 @@ private:
     KeySearchResult keyExists(const std::string& collectionName, const std::string& key) const;
     bool writeFile(const std::string& filename, const std::string& content) const;
     bool matchesFilter(const JsonValue* document, const JsonValue* filter) const;
-    int findInternal(const std::string& collectionName, const JsonValue* filter, int limit) const;
+    int findInternal(const std::string& collectionName, const JsonValue* filter, int limit, const List* projection) const;
     bool compareValues(const JsonValue* first, const JsonValue* second, const std::string& op) const;
     bool matchesCondition(const JsonValue* field, const JsonValue* condition) const;
     bool matchesLogical(const JsonValue* document, const JsonValue* conndition) const;
+    void printDocument(const JsonValue* document, const List* projection) const;
 public:
     explicit Storage(Schema* dbSchema);
     bool insertOne(const std::string& collectionName, const std::string& key, const JsonValue* document);
     int insertMany(const std::string& collectionName, const JsonValue* documents);
-    int find(const std::string& collectionName, const JsonValue* filter) const;
+    int find(const std::string& collectionName, const JsonValue* filter, int limit = 0, const List* projection = nullptr) const;
     bool findOne(const std::string& collecrionName, const JsonValue* filter) const;
 };
