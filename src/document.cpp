@@ -144,3 +144,31 @@ bool JsonValue::copyFrom(const JsonValue* other){
 
     return true;
 }
+
+bool JsonValue::removeChild(JsonValue* node){
+    if (node == nullptr) return false;
+
+    if (type != JSON_OBJECT && type != JSON_ARRAY) return false;
+
+    JsonValue* current = child;
+    JsonValue* previous = nullptr;
+
+    while(current != nullptr){
+        if (node == current){
+            if (previous == nullptr){
+                child = current->next;
+            }else{
+                previous->next = current->next;
+            }
+
+            current->next = nullptr;
+
+            delete current;
+            return true;
+        }
+
+        previous = current;
+        current = current->next;
+    }
+    return false;
+}

@@ -39,7 +39,85 @@ int main() {
     Storage storage(&db_schema);
 
 
-    cout << "\n=== UpdateOne Test ===" << endl;
+    cout << "\n=== DeleteMany Test ===" << endl;
+
+    JsonValue* filter = JsonParser::parse(
+        "{\"age\":23}"
+    );
+
+    if (filter != nullptr) {
+        int count = storage.deleteMany("users", filter);
+
+        cout << "Deleted documents: " << count << endl;
+    }
+
+    delete filter;
+
+    JsonValue* all = JsonParser::parse("{}");
+
+    if (all != nullptr) {
+        storage.find("users", all);
+    }
+
+    delete all;
+
+
+
+    /*cout << "\n=== DeleteOne Test ===" << endl;
+
+    JsonValue* filter = JsonParser::parse(
+        "{\"name\":\"Robert\"}"
+    );
+
+    if (filter != nullptr) {
+        bool deleted = storage.deleteOne("users", filter);
+
+        cout << "Deleted: "
+            << (deleted ? "yes" : "no") << endl;
+    }
+
+    delete filter;
+
+    JsonValue* all = JsonParser::parse("{}");
+
+    if (all != nullptr) {
+        storage.find("users", all);
+    }
+
+    delete all;*/
+
+
+
+    /*cout << "\n=== UpdateMany Test ===" << endl;
+
+    JsonValue* filter = JsonParser::parse(
+        "{\"age\":{\"$lt\":23}}"
+    );
+
+    JsonValue* update = JsonParser::parse(
+        "{\"$inc\":{\"age\":1}}"
+    );
+
+    if (filter != nullptr && update != nullptr) {
+        int count = storage.updateMany("users", filter, update);
+
+        cout << "Updated documents: " << count << endl;
+    }
+
+    delete filter;
+    delete update;
+
+    JsonValue* all = JsonParser::parse("{}");
+
+    if (all != nullptr) {
+        storage.find("users", all);
+    }
+
+    delete all;*/
+
+
+
+    /*cout << "\n=== UpdateOne Test ===" << endl;
 
     JsonValue* filter = JsonParser::parse(
         "{\"name\":\"Bob\"}"
@@ -65,7 +143,7 @@ int main() {
         storage.find("users", all);
     }
 
-    delete all;
+    delete all;*/
 
 
     /*cout << "\n CopyFrom Test " << endl;

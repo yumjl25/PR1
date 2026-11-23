@@ -878,21 +878,119 @@ bool Storage::aplyPush(JsonValue* document, const JsonValue* fields) const {
     return true;
 }
 
-bool Storage::updateOne(const string& collectionName, const JsonValue* filter, const JsonValue* update){
-    if (schema == nullptr) return false;
+bool Storage::updateOne(const string& collectionName, const JsonValue* filter, const JsonValue* update) {
+    return updateInternal(collectionName, filter, update, false) == 1;
+}
+
+int Storage::updateMany(const string& collectionName, const JsonValue* filter, const JsonValue* update) {
+    return updateInternal(collectionName, filter, update, true);
+}
+
+int Storage::updateInternal(const string& collectionName, const JsonValue* filter, const JsonValue* update, bool multi){
+    if (schema == nullptr) return -1;
     Collection* collection = schema->findCollection(collectionName);
 
     if (collection == nullptr){
         cerr << "Collection not found: " << collectionName << endl;
-        return false;
+        return -1;
     }
-
     if (filter == nullptr || filter->getType() != JSON_OBJECT || update == nullptr || update->getType() != JSON_OBJECT){
         cerr << "Invalid update arguments" << endl;
-        return false;
+        return -1;
     }
 
+    int updateCount = 0;
     int fileNumber = 1;
+
+    while(true){
+        string filename = getFilePath(collectionName, fileNumber);
+        if (!fileExists(filename)){
+            break;
+        }
+
+        JsonValue* root = storageLoadFile(filename);
+        if (root == nullptr) {
+            return -1;
+        }
+
+        bool fileChanged = false;
+        JsonValue* current = root->getChild();
+
+        while(current != nullptr){
+            if(matchesFilter(current, filter)){
+                JsonValue* copy = new JsonValue();
+
+                if (!copy->copyFrom(current)){
+                    delete copy;
+                    delete root;
+                    return -1;
+                }
+
+                if (!aplyUpdate(copy, update)){
+                    delete copy;
+                    delete root;
+                    return -1;
+                }
+
+                if (!validateDocument(collection, copy)){
+                    cerr << "Updated document violates schema" << endl;
+                    delete copy;
+                    delete root;
+                    return -1;
+                }
+
+                if (!current->copyFrom(copy)){
+                    delete copy;
+                    delete root;
+                    return -1;
+                }
+
+                delete copy;
+
+                fileChanged = true;
+                updateCount++;
+
+                if(!multi) break;
+            }
+            current = current->getNext();
+        }
+
+        if (fileChanged){
+            string content = JsonParser::stringify(root);
+
+            if (!writeFile(filename, content)) {
+                cerr << "Cannot save updated file: " << filename << endl;
+                delete root;
+                return -1;
+            }
+        }
+
+        delete root;
+
+        if (!multi && updateCount > 0) {
+            return updateCount;
+        }
+        fileNumber++;
+    }
+    return updateCount;
+}
+
+int Storage::deleteInternal(const string& collectionName, const JsonValue* filter, bool multi){
+    if (schema == nullptr) return -1;
+
+    if (!schema->findCollection(collectionName)){
+        cerr << "Collection not found: " << collectionName << endl;
+        return -1;
+    }
+
+    if (filter == nullptr || filter->getType() != JSON_OBJECT){
+        cerr << "Invalid delete filter" << endl;
+        return -1;
+    }
+
+    int deletedCount = 0;
+    int fileNumber = 1;
+
     while(true){
         string filename = getFilePath(collectionName, fileNumber);
 
@@ -902,64 +1000,59 @@ bool Storage::updateOne(const string& collectionName, const JsonValue* filter, c
 
         JsonValue* root = storageLoadFile(filename);
         if (root == nullptr){
-            return false;
+            return -1;
         }
+
+        bool fileChanged = false;
+        int deletedInFile = 0;
 
         JsonValue* current = root->getChild();
 
-        while (current != nullptr) {
-            if (matchesFilter(current, filter)){
+        while(current != nullptr){
+            JsonValue* next = current->getNext();
 
-                JsonValue* copy = new JsonValue();
-
-                if (!copy->copyFrom(current)){
-                    delete copy;
+            if(matchesFilter(current, filter)){
+                if (!root->removeChild(current)){
+                    cerr << "Cannot delete document" << endl;
                     delete root;
-                    return false;
+                    return -1;
                 }
 
-                if (!aplyUpdate(copy, update)){
-                    delete copy;
-                    delete root;
-                    return false;
-                }
+                fileChanged = true;
+                deletedInFile++;
 
-                if (!validateDocument(collection, copy)){
-                    cerr << "Updated document violates schema" << endl;
-                    delete copy;
-                    delete root;
-                    return false;
-                }
+                if(!multi) break;
+            }
+            current = next;
+        }
 
-                if (!current->copyFrom(copy)){
-                    delete copy;
-                    delete root;
-                    return false;
-                }
-        
-                delete copy;
+        if (fileChanged){
+            string content = JsonParser::stringify(root);
 
-                string content = JsonParser::stringify(root);
-                bool success = writeFile(filename, content);
-
+            if (!writeFile(filename, content)) {
+                cerr << "Cannot save file: " << filename << endl;
                 delete root;
-
-                if (!success){
-                    cerr << "Cannot save updated document" << endl;
-                    return false;
-                }
-
-                return true;
+                return -1;
             }
 
-            current = current->getNext();
+            deletedCount += deletedInFile;
         }
 
         delete root;
+
+        if (!multi && deletedCount > 0){
+            return deletedCount;
+        }
         fileNumber++;
     }
-
-    return false;
+    return deletedCount;
 }
 
+bool Storage::deleteOne(const string& collectionName, const JsonValue* filter){
+    return deleteInternal(collectionName, filter, false) == 1;
+}
+
+int Storage::deleteMany(const string& collectionName, const JsonValue* filter) {
+    return deleteInternal(collectionName, filter, true);
+}
 

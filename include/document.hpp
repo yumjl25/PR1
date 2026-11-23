@@ -43,4 +43,6 @@ public:
     void addChild(JsonValue* node);
     JsonValue* find(const std::string& fieldName) const;
     bool copyFrom(const JsonValue* other);
+    bool removeChild(JsonValue* node);
+
 };

@@ -31,7 +31,8 @@ private:
     bool aplySet(JsonValue* document, const JsonValue* fields) const;
     bool aplyInc(JsonValue* document, const JsonValue* fields) const;
     bool aplyPush(JsonValue* document, const JsonValue* fields) const;
-
+    int updateInternal(const std::string& collectionName, const JsonValue* filter, const JsonValue* update, bool multi);
+    int deleteInternal(const std::string& collectionName, const JsonValue* filter, bool multi);
 public:
     explicit Storage(Schema* dbSchema);
     bool insertOne(const std::string& collectionName, const std::string& key, const JsonValue* document);
@@ -39,4 +40,7 @@ public:
     int find(const std::string& collectionName, const JsonValue* filter, int limit = 0, const List* projection = nullptr) const;
     bool findOne(const std::string& collectionName, const JsonValue* filter) const;
     bool updateOne(const std::string& collectionName, const JsonValue* filter, const JsonValue* update);
+    int updateMany(const std::string& collectionName, const JsonValue* filter, const JsonValue* update);
+    bool deleteOne(const std::string& collectionName, const JsonValue* filter);
+    int deleteMany(const std::string& collectionName, const JsonValue* filter);
 };

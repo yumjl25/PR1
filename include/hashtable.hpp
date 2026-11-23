@@ -30,6 +30,7 @@ public:
     bool isEmpty() const;
     int getSize() const;
     void print() const;
+
     void saveToBinary(const std::string& filename) const;
     void loadFromBinary(const std::string& filename);
 };
