@@ -4,8 +4,57 @@
 #include <iostream>
 #include <fstream>
 #include <cstdio>
+#include <climits>
+#include <cstdint>
+
 
 using namespace std;
+
+
+static bool parseInt32(const std::string& text, int32_t& result) {
+    if (text.empty()) return false;
+
+    int i = 0;
+    bool negative = false;
+
+    if (text[0] == '-') {
+        negative = true;
+        i = 1;
+    }
+
+    if (i == static_cast<int>(text.length())) {
+        return false;
+    }
+
+    int32_t number = 0;
+
+    for (; i < static_cast<int>(text.length()); i++) {
+        char digit = text[i];
+
+        if (digit < '0' || digit > '9') {
+            return false;
+        }
+
+        int32_t d = digit - '0';
+
+        if (negative) {
+            if (number < (INT32_MIN + d) / 10) {
+                return false;
+            }
+
+            number = number * 10 - d;
+        } else {
+            if (number > (INT32_MAX - d) / 10) {
+                return false;
+            }
+
+            number = number * 10 + d;
+        }
+    }
+
+    result = number;
+    return true;
+}
 
 Storage::Storage(Schema* dbSchema) : schema(dbSchema) {}
 
@@ -344,37 +393,8 @@ int Storage::findInternal(const string& collectionName, const JsonValue* filter,
             break;
         }
 
-        ifstream file(filename);
-
-        if (!file.is_open()){
-            cerr << "Cannot open file: " << filename << endl;
-            return -1;
-        }
-
-        string content = "";
-        string line;
-
-        while (getline(file, line)){
-            content += line;
-            content += '\n';
-        }
-
-        if (file.bad()){
-            cerr << "Error reading file: " << filename << endl;
-            return -1;
-        }
-
-        file.close();
-
-        if (content.empty()){
-            fileNumber++;
-            continue;
-        }
-
-        JsonValue* root = JsonParser::parse(content);
-        if (root == nullptr || root->getType() != JSON_OBJECT){
-            cerr << "Invalid storage file: " << filename << endl;
-            delete root;
+        JsonValue* root = storageLoadFile(filename);
+        if (root == nullptr){
             return -1;
         }
 
@@ -602,4 +622,344 @@ void Storage::printDocument(const JsonValue* document, const List* projection) c
     }
     cout << "}";
 }
+
+JsonValue* Storage::storageLoadFile(const string& filename) const {
+    ifstream file(filename);
+
+    if (!file.is_open()){
+        cerr << "Cannot open file: " << filename << endl;
+        return nullptr;
+    }
+
+    string content;
+    string line;
+    
+    while(getline(file, line)){
+        content += line;
+        content += '\n';
+    }
+
+    if (file.bad()){
+        cerr << "Error reading file: " << filename << endl;
+        return nullptr;
+    }
+
+    file.close();
+
+    if (content.empty()){
+        cerr << "Empty storage file: " << filename << endl;
+        return nullptr;
+    }
+
+    JsonValue* root = JsonParser::parse(content);
+
+    if (root == nullptr){
+        cerr << "Cannot parse storage file: " << filename;
+        return nullptr;
+    }
+
+    if (root->getType() != JSON_OBJECT){
+        cerr << "Invalid storage format: " << filename << endl;
+        delete root;
+        return nullptr;
+    }
+    return root;
+}
+
+bool Storage::aplyUpdate(JsonValue* document, const JsonValue* update) const {
+    if (document == nullptr || update == nullptr) return false;
+
+    if (document->getType() != JSON_OBJECT || update->getType() != JSON_OBJECT){
+        cerr << "Invalid update arguments" << endl;
+        return false;
+    }
+
+    if (update->getChild() == nullptr){
+        cerr << "Empty update" << endl;
+        return false;
+    }
+
+    const JsonValue* current = update->getChild();
+    while (current != nullptr) {
+        string op = current->getKey();
+
+        if (op != "$set" && op != "$inc" && op != "$push"){
+            cerr << "Unknown update operator: " << op << endl;
+            return false;
+        }
+
+        if (current->getType() != JSON_OBJECT) {
+            cerr << "Invalid update operator arguments: " << op << endl;
+            return false;
+        }
+
+        current = current->getNext();
+    }
+
+    current = update->getChild();
+
+    while (current != nullptr){
+        bool success = false;
+        string op = current->getKey();
+
+        if (op == "$set") {
+            success = aplySet(document, current);
+        }
+        else if (op == "$inc") {
+            success = aplyInc(document, current);
+        }
+        else if (op == "$push") {
+            success = aplyPush(document, current);
+        }
+
+        if (!success) {
+            cerr << "Update failed: " << op << endl;
+            return false;
+        }
+
+        current = current->getNext();
+    }
+
+    return true;
+}
+
+
+bool Storage::aplySet(JsonValue* document, const JsonValue* fields) const {
+    if (document == nullptr || fields == nullptr) {
+        return false;
+    }
+
+    if (document->getType() != JSON_OBJECT || fields->getType() != JSON_OBJECT) {
+        cerr << "Invalid $set arguments" << endl;
+        return false;
+    }
+
+    const JsonValue* current = fields->getChild();
+
+    while (current != nullptr) {
+        JsonValue* field = document->find(current->getKey());
+
+        if (field == nullptr) {
+            cerr << "Field not found: "
+                 << current->getKey() << endl;
+            return false;
+        }
+
+        if (field->getType() != current->getType()) {
+            cerr << "Type mismatch for field: "
+                 << current->getKey() << endl;
+            return false;
+        }
+
+        current = current->getNext();
+    }
+
+    current = fields->getChild();
+
+    while (current != nullptr){
+        JsonValue* field = document->find(current->getKey());
+
+        if (!field->copyFrom(current)){
+            cerr << "Cannot update field: " << current->getKey() << endl;
+            return false;
+        }
+
+        current = current->getNext();
+    }
+
+    return true;
+}
+
+
+bool Storage::aplyInc(JsonValue* document, const JsonValue* fields) const {
+    if (document == nullptr || fields == nullptr){
+        return false;
+    }
+
+    if (document->getType() != JSON_OBJECT || fields->getType() != JSON_OBJECT) {
+        cerr << "Invalid $inc arguments" << endl;
+        return false;
+    }
+
+    const JsonValue* current = fields->getChild();
+
+    while (current != nullptr){
+        JsonValue* field = document->find(current->getKey());
+
+        if (field == nullptr || field->getType() != JSON_INT || current->getType() != JSON_INT){
+            cerr << "Invalid integer field: " << current->getKey() << endl;
+            return false;
+        }
+
+        int32_t oldValue;
+        int32_t increment;
+
+        if (!parseInt32(field->getValue(), oldValue) || !parseInt32(current->getValue(), increment)){
+            cerr << "Invalid integer value" << endl;
+            return false;
+        }
+
+        if ((increment > 0 && oldValue > INT32_MAX - increment) || (increment < 0 && oldValue < INT32_MIN - increment)){
+            cerr << "Integer overflow: " << current->getKey() << endl;
+            return false;
+        }
+
+        current = current->getNext();
+    }
+
+    current = fields->getChild();
+
+    while (current != nullptr) {
+        JsonValue* field = document->find(current->getKey());
+
+        int32_t oldValue;
+        int32_t increment;
+
+        parseInt32(field->getValue(), oldValue);
+        parseInt32(current->getValue(), increment);
+
+        field->setInt(oldValue + increment);
+
+        current = current->getNext();
+    }
+
+    return true;
+}
+
+
+bool Storage::aplyPush(JsonValue* document, const JsonValue* fields) const {
+    if (document == nullptr || fields == nullptr) {
+        return false;
+    }
+
+    if (document->getType() != JSON_OBJECT || fields->getType() != JSON_OBJECT) {
+        cerr << "Invalid $push arguments" << endl;
+        return false;
+    }
+
+    const JsonValue* current = fields->getChild();
+
+    while (current != nullptr){
+        JsonValue* field = document->find(current->getKey());
+
+        if (field == nullptr){
+            cerr << "Field not found: " << current->getKey() << endl;
+            return false;
+        }
+
+        if (field->getType() != JSON_ARRAY){
+            cerr << "$push requires an array: " << current->getKey() << endl;
+            return false;
+        }
+
+        current = current->getNext();
+    }
+
+    current = fields->getChild();
+
+    while (current != nullptr){
+        JsonValue* field = document->find(current->getKey());
+
+        JsonValue* newElement = new JsonValue();
+
+        if (!newElement->copyFrom(current)){
+            delete newElement;
+            cerr << "Cannot copy $push element" << endl;
+            return false;
+        }
+
+        newElement->setKey("");
+
+        field->addChild(newElement);
+
+        current = current->getNext();
+    }
+
+    return true;
+}
+
+bool Storage::updateOne(const string& collectionName, const JsonValue* filter, const JsonValue* update){
+    if (schema == nullptr) return false;
+    Collection* collection = schema->findCollection(collectionName);
+
+    if (collection == nullptr){
+        cerr << "Collection not found: " << collectionName << endl;
+        return false;
+    }
+
+    if (filter == nullptr || filter->getType() != JSON_OBJECT || update == nullptr || update->getType() != JSON_OBJECT){
+        cerr << "Invalid update arguments" << endl;
+        return false;
+    }
+
+    int fileNumber = 1;
+    while(true){
+        string filename = getFilePath(collectionName, fileNumber);
+
+        if (!fileExists(filename)){
+            break;
+        }
+
+        JsonValue* root = storageLoadFile(filename);
+        if (root == nullptr){
+            return false;
+        }
+
+        JsonValue* current = root->getChild();
+
+        while (current != nullptr) {
+            if (matchesFilter(current, filter)){
+
+                JsonValue* copy = new JsonValue();
+
+                if (!copy->copyFrom(current)){
+                    delete copy;
+                    delete root;
+                    return false;
+                }
+
+                if (!aplyUpdate(copy, update)){
+                    delete copy;
+                    delete root;
+                    return false;
+                }
+
+                if (!validateDocument(collection, copy)){
+                    cerr << "Updated document violates schema" << endl;
+                    delete copy;
+                    delete root;
+                    return false;
+                }
+
+                if (!current->copyFrom(copy)){
+                    delete copy;
+                    delete root;
+                    return false;
+                }
+        
+                delete copy;
+
+                string content = JsonParser::stringify(root);
+                bool success = writeFile(filename, content);
+
+                delete root;
+
+                if (!success){
+                    cerr << "Cannot save updated document" << endl;
+                    return false;
+                }
+
+                return true;
+            }
+
+            current = current->getNext();
+        }
+
+        delete root;
+        fileNumber++;
+    }
+
+    return false;
+}
+
 

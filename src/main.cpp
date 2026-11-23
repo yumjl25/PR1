@@ -39,6 +39,61 @@ int main() {
     Storage storage(&db_schema);
 
 
+    cout << "\n=== UpdateOne Test ===" << endl;
+
+    JsonValue* filter = JsonParser::parse(
+        "{\"name\":\"Bob\"}"
+    );
+
+    JsonValue* update = JsonParser::parse(
+        "{\"$set\":{\"name\":\"Robert\"},"
+        "\"$inc\":{\"age\":2}}"
+    );
+
+    if (filter != nullptr && update != nullptr) {
+        bool updated = storage.updateOne("users", filter, update);
+
+        cout << "Updated: " << (updated ? "yes" : "no") << endl;
+    }
+
+    delete filter;
+    delete update;
+
+    JsonValue* all = JsonParser::parse("{}");
+
+    if (all != nullptr) {
+        storage.find("users", all);
+    }
+
+    delete all;
+
+
+    /*cout << "\n CopyFrom Test " << endl;
+
+    JsonValue* document = JsonParser::parse(
+        "{\"id\":2,\"name\":\"Bob\",\"age\":21}"
+    );
+
+    JsonValue* update = JsonParser::parse(
+        "{\"age\":25}"
+    );
+
+    if (document != nullptr && update != nullptr) {
+        JsonValue* oldAge = document->find("age");
+        JsonValue* newAge = update->find("age");
+
+        if (oldAge != nullptr && newAge != nullptr) {
+            oldAge->copyFrom(newAge);
+        }
+
+        cout << JsonParser::stringify(document) << endl;
+    }
+
+    delete document;
+    delete update;
+
+
+
     cout << "\n Limit and Projection Test " << endl;
 
     JsonValue* filter = JsonParser::parse("{}");
@@ -72,7 +127,7 @@ int main() {
 
         delete filter;
     }
-
+*/
 
 
     cout << "\n Logical Operators Test " << endl;
@@ -164,7 +219,7 @@ int main() {
 
 
     //string json = "{\"id\":1,\"name\":\"Alice\",\"age\":20}";
-    string json = "{\"id\":2,\"name\":\"Bob\",\"age\":21}";
+    /*string json = "{\"id\":2,\"name\":\"Bob\",\"age\":21}";
 
     JsonValue* document = JsonParser::parse(json);
 
@@ -176,7 +231,7 @@ int main() {
     }
 
 
-    cout << " DBMS Finished " << endl;
+    cout << " DBMS Finished " << endl;*/
 
 
     /*cout << "\n Insert Many Test " << endl;

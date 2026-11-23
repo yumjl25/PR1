@@ -107,3 +107,40 @@ JsonValue* JsonValue::find(const string& fieldName) const {
     }
     return nullptr;
 }
+
+bool JsonValue::copyFrom(const JsonValue* other){
+    if (other == nullptr) return false;
+    if (this == other) return true;
+
+    JsonValue* newChild = nullptr;
+    JsonValue* newTail = nullptr;
+
+    const JsonValue* current = other->getChild();
+
+    while (current != nullptr){
+        JsonValue* node = new JsonValue();
+        if (!node->copyFrom(current)){
+            delete node;
+            delete newChild;
+            return false;
+        }
+
+        node->setKey(current->getKey());
+
+
+        if (newChild == nullptr){
+            newChild = node;
+        }else{
+            newTail->next = node;
+        }
+
+        newTail = node;
+        current = current->next;
+    }
+    delete child;
+    type = other->type;
+    value = other->value;
+    child = newChild;
+
+    return true;
+}
