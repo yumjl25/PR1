@@ -419,12 +419,17 @@ int Storage::findInternal(const string& collectionName, const JsonValue* filter,
 }
 
 
-int Storage::find(const string& collectionName, const JsonValue* filter, int limit, const List* projection) const {
+int Storage::find(const string& collectionName, const JsonValue* filter, int limit, const List* projection, const string& sortField, bool ascending) const {
     if (limit < 0){
         cerr << "Invalid limit" << endl;
         return -1;
     }
-    return findInternal(collectionName, filter, limit, projection);
+
+    if(sortField.empty()){
+        return findInternal(collectionName, filter, limit, projection);
+    }
+
+    return findSorted(collectionName, filter, limit, projection, sortField, ascending);
 }
 
 bool Storage::findOne(const string& collectionName, const JsonValue* filter) const {
@@ -1055,4 +1060,493 @@ bool Storage::deleteOne(const string& collectionName, const JsonValue* filter){
 int Storage::deleteMany(const string& collectionName, const JsonValue* filter) {
     return deleteInternal(collectionName, filter, true);
 }
+
+int Storage::compareDocument(const JsonValue* first, const JsonValue* second, const string& sortField) const {
+    const JsonValue* firstField = first->find(sortField);
+    const JsonValue* secondField = second->find(sortField);
+
+    if (firstField == nullptr && secondField == nullptr){
+        return 0;
+    }
+    if (firstField == nullptr) {return -1;}
+    if (secondField == nullptr) {return -1;}
+
+    if (firstField->getType() != secondField->getType()){
+        if (firstField->getType() < secondField->getType()){
+            return -1;
+        }
+        return 1;
+    }
+
+    if (firstField->getType() == JSON_INT){
+        int32_t firstValue;
+        int32_t secondValue;
+
+        if (parseInt32(firstField->getValue(), firstValue) && parseInt32(secondField->getValue(), secondValue)){
+            if (firstValue < secondValue) return -1;
+            if (firstValue > secondValue) return 1;
+            
+            return 0;
+        }
+    }
+
+    string firstValue = firstField->getValue();
+    string secondValue = secondField->getValue();
+    if (firstValue < secondValue) return -1;
+    if (firstValue > secondValue) return 1;
+
+    return 0;
+}
+
+int Storage::findSorted(const string& collectionName, const JsonValue* filter, int limit, const List* projection, const string& sortField, bool ascending) const {
+    if (schema == nullptr) return -1;
+    if (schema->findCollection(collectionName) == nullptr){
+        cerr << "Collection not found: " << collectionName << endl;
+        return -1;
+    }
+
+    if (filter == nullptr || filter->getType() != JSON_OBJECT){
+        cerr << "Invalid filter" << endl;
+        return -1;
+    }
+
+    if (limit < 0){
+        cerr << "Invalid limit" << endl;
+        return -1;
+    }
+
+    int fileNumber = 1;
+    int runCount = 0;
+
+    while(true){
+        string filename = getFilePath(collectionName, fileNumber);
+
+        if (!fileExists(filename)){
+            break;
+        }
+
+        string tempFilename = getSortFilePath(collectionName, 0, runCount + 1);
+
+        int count = createSortedRun(filename, tempFilename, filter, sortField, ascending);
+
+        if (count < 0){
+            cleanupSortFiles(collectionName, runCount + 1);
+            return -1;
+        }
+
+        if (count == 0){
+            std::remove(tempFilename.c_str());
+        } else {
+            runCount++;
+        }
+
+        fileNumber++;
+    }
+    if (runCount == 0) {
+        return 0;
+    }
+
+    int initialRunCount = runCount;
+    int pass = 0;
+
+    while (runCount > 1){
+
+        int newRunCount = 0;
+        int i = 1;
+
+        while (i <= runCount){
+
+            string firstFilename = getSortFilePath(collectionName, pass, i);
+
+            string outputFilename = getSortFilePath(collectionName, pass + 1, newRunCount + 1);
+
+            if (i == runCount) {
+
+                if (std::rename(firstFilename.c_str(), outputFilename.c_str()) != 0){
+                    cerr << "Cannot move sorted file" << endl;
+
+                    cleanupSortFiles(collectionName, initialRunCount);
+                    return -1;
+                }
+                i++;
+
+            } else {
+                string secondFilename = getSortFilePath(collectionName, pass, i + 1);
+
+                if (!mergeSortedRuns(firstFilename, secondFilename, outputFilename, sortField, ascending)){
+                    cleanupSortFiles(collectionName, initialRunCount);
+                    return -1;
+                }
+
+                std::remove(firstFilename.c_str());
+                std::remove(secondFilename.c_str());
+                i += 2;
+            }
+            newRunCount++;
+        }
+
+        runCount = newRunCount;
+        pass++;
+    }
+
+    string finalFilename = getSortFilePath(collectionName, pass, 1);
+
+    ifstream file(finalFilename);
+
+    if (!file.is_open()) {
+        cleanupSortFiles(collectionName, initialRunCount);
+        return -1;
+    }
+
+    int foundCount = 0;
+    bool success = true;
+
+    while (limit == 0 || foundCount < limit){
+
+        JsonValue* document = nullptr;
+
+        int status = readSortedDocument(file, document);
+
+        if (status == 0){
+            break;
+        }
+
+        if (status == -1){
+            delete document;
+            success = false;
+            break;
+        }
+
+        cout << document->getKey() << ":";
+
+        printDocument(document, projection);
+
+        cout << endl;
+
+        foundCount++;
+
+        delete document;
+    }
+
+    file.close();
+
+    cleanupSortFiles(collectionName, initialRunCount);
+
+    if (!success){
+        return -1;
+    }
+
+    return foundCount;
+}
+
+Storage::SortNode* Storage::splitSortList(SortNode* head) const {
+    if (head == nullptr || head->next == nullptr) return nullptr;
+
+    SortNode* slow = head;
+    SortNode* fast = head->next;
+
+    while(fast != nullptr && fast->next != nullptr){
+        slow = slow->next;
+        fast = fast->next->next;
+    }
+
+    SortNode* second = slow->next;
+    slow->next = nullptr;
+
+    return second;
+}
+
+Storage::SortNode* Storage::mergeSortLists(SortNode* first, SortNode* second, const string& sortField, bool ascending) const {
+    SortNode dummy;
+    dummy.document = nullptr;
+    dummy.next = nullptr;
+
+    SortNode* tail = &dummy;
+
+    while(first != nullptr && second != nullptr){
+        int cmp = compareDocument(first->document, second->document, sortField);
+        
+        bool takeFirst;
+
+        if (ascending){
+            takeFirst = (cmp <= 0);
+        }else{
+            takeFirst = (cmp >= 0);
+        }
+
+        if (takeFirst){
+            tail->next = first;
+            first = first->next;
+        }else{
+            tail->next = second;
+            second = second->next;
+        }
+        tail = tail->next;
+    }
+    if (first != nullptr){
+        tail->next = first;
+    }else{
+        tail->next = second;
+    }
+    return dummy.next;
+}
+
+Storage::SortNode* Storage::mergeSort(SortNode* head, const string& sortField, bool ascending) const {
+    if (head == nullptr || head->next == nullptr){
+        return head;
+    }
+
+    SortNode* second = splitSortList(head);
+    head = mergeSort(head, sortField, ascending);
+    second = mergeSort(second, sortField, ascending);
+    return mergeSortLists(head, second, sortField, ascending);
+}
+
+void Storage::freeSortList(SortNode* head) const {
+    while(head != nullptr){
+        SortNode* next = head->next;
+        delete head;
+        head = next;
+    }
+}
+
+int Storage::createSortedRun(const string& filename, const string& tempFilename, const JsonValue* filter, const string& sortField, bool ascending) const {
+    JsonValue* root = storageLoadFile(filename);
+
+    if (root == nullptr){
+        return -1;
+    }
+
+    SortNode* head = nullptr;
+    SortNode* tail = nullptr;
+
+    int count = 0;
+
+    const JsonValue* current = root->getChild();
+
+    while (current != nullptr){
+        if (matchesFilter(current, filter)){
+
+            SortNode* node = new SortNode();
+
+            node->document = current;
+            node->next = nullptr;
+
+            if (head == nullptr){
+                head = node;
+            } else {
+                tail->next = node;
+            }
+
+            tail = node;
+            count++;
+        }
+
+        current = current->getNext();
+    }
+
+    head = mergeSort(head, sortField, ascending);
+
+    ofstream out(tempFilename);
+
+    if (!out.is_open()){
+        cerr << "Cannot create temporary file" << endl;
+
+        freeSortList(head);
+        delete root;
+
+        return -1;
+    }
+
+    SortNode* node = head;
+
+    while (node != nullptr){
+
+        JsonValue key(node->document->getKey());
+
+        out << JsonParser::stringify(&key) << '\n';
+        out << JsonParser::stringify(node->document) << '\n';
+
+        node = node->next;
+    }
+
+    out.close();
+
+    bool success = !out.fail();
+
+    freeSortList(head);
+    delete root;
+
+    if (!success) {
+        cerr << "Cannot write temporary file" << endl;
+        return -1;
+    }
+    return count;
+}
+
+
+int Storage::readSortedDocument(ifstream& file, JsonValue*& document) const {
+    document = nullptr;
+    string keyText;
+    string documentText;
+
+    if (!getline(file, keyText)){
+        if (file.eof() && !file.bad()){
+            return 0;
+        }
+        return -1;
+    }
+
+    if (!getline(file, documentText)){
+        return -1;
+    }
+
+    JsonValue* key = JsonParser::parse(keyText);
+
+    if (key == nullptr || key->getType() != JSON_STRING){
+        delete key;
+        return -1;
+    }
+
+    document = JsonParser::parse(documentText);
+
+    if (document == nullptr || document->getType() != JSON_OBJECT){
+        delete key;
+        delete document;
+
+        document = nullptr;
+        return -1;
+    }
+
+    document->setKey(key->getValue());
+
+    delete key;
+
+    return 1;
+}
+
+
+bool Storage::writeSortedDocument(ofstream& file, const JsonValue* document) const {
+    if (document == nullptr) return false;
+
+    JsonValue key(document->getKey());
+
+    file << JsonParser::stringify(&key) << '\n';
+    file << JsonParser::stringify(document) << '\n';
+
+    return file.good();
+}
+
+
+bool Storage::mergeSortedRuns(const string& firstFilename, const string& secondFilename, const string& outputFilename, const string& sortField, bool ascending) const {
+    ifstream firstFile(firstFilename);
+    ifstream secondFile(secondFilename);
+
+    if (!firstFile.is_open() || !secondFile.is_open()){
+        cerr << "Cannot open sorted files" << endl;
+        return false;
+    }
+
+    ofstream outputFile(outputFilename);
+
+    if (!outputFile.is_open()) {
+        cerr << "Cannot create merged file" << endl;
+        return false;
+    }
+
+    JsonValue* first = nullptr;
+    JsonValue* second = nullptr;
+
+    int firstStatus = readSortedDocument(firstFile, first);
+
+    int secondStatus = readSortedDocument(secondFile, second);
+
+    bool success = true;
+
+    while (firstStatus == 1 || secondStatus == 1){
+        if (firstStatus == -1 || secondStatus == -1){
+            success = false;
+            break;
+        }
+        bool takeFirst;
+        if (firstStatus == 0){
+            takeFirst = false;
+        }
+        else if (secondStatus == 0){
+            takeFirst = true;
+        }
+        else {
+            int cmp = compareDocument(first, second, sortField);
+            if (ascending){
+                takeFirst = (cmp <= 0);
+            } else {
+                takeFirst = (cmp >= 0);
+            }
+        }
+        if (takeFirst) {
+            if (!writeSortedDocument(outputFile, first)){
+                success = false;
+                break;
+            }
+
+            delete first;
+            first = nullptr;
+
+            firstStatus = readSortedDocument(
+                firstFile, first
+            );
+
+        } else {
+
+            if (!writeSortedDocument(outputFile, second)) {
+                success = false;
+                break;
+            }
+
+            delete second;
+            second = nullptr;
+
+            secondStatus = readSortedDocument(secondFile, second);
+        }
+    }
+
+    if (firstStatus == -1 || secondStatus == -1){
+        success = false;
+    }
+
+    delete first;
+    delete second;
+
+    firstFile.close();
+    secondFile.close();
+    outputFile.close();
+
+    if (outputFile.fail()){
+        success = false;
+    }
+
+    if (!success) {
+        cerr << "Error merging sorted files" << endl;
+    }
+
+    return success;
+}
+
+string Storage::getSortFilePath(const string& collectionName, int pass, int number) const {
+    return getCollectionPath(collectionName) + "/sort_" + to_string(pass) + "_" + to_string(number) + ".tmp";
+}
+
+void Storage::cleanupSortFiles(const string& collectionName, int runCount) const {
+    int pass = 0;
+    while (runCount > 0){
+        for (int i = 1; i <= runCount; i++){
+            string filename = getSortFilePath(collectionName, pass, i);
+            std::remove(filename.c_str());
+        }
+        if (runCount == 1) break;
+        runCount = runCount / 2 + runCount % 2;
+        pass++;
+    }
+}
+
 

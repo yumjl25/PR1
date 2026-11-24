@@ -38,8 +38,55 @@ int main() {
 
     Storage storage(&db_schema);
 
+    cout << "\n=== Combined Test ===" << endl;
 
-    cout << "\n=== DeleteMany Test ===" << endl;
+    JsonValue* sortFilter = JsonParser::parse(
+        "{\"age\":{\"$gt\":20}}"
+    );
+
+    List projection;
+    projection.pushTail("name");
+    projection.pushTail("age");
+
+    storage.find(
+        "users",
+        sortFilter,
+        2,
+        &projection,
+        "age",
+        false
+    );
+
+    delete sortFilter;
+    /*cout << "\n=== Sort Test ===" << endl;
+
+    JsonValue* filter = JsonParser::parse("{}");
+
+    if (filter != nullptr) {
+
+        cout << "\nAscending:" << endl;
+
+        storage.find(
+            "users", filter, 0, nullptr, "age", true
+        );
+
+        cout << "\nDescending:" << endl;
+
+        storage.find(
+            "users", filter, 0, nullptr, "age", false
+        );
+
+        cout << "\nDescending with limit 1:" << endl;
+
+        storage.find(
+            "users", filter, 1, nullptr, "age", false
+        );
+    }
+
+    delete filter;*/
+
+
+    /*cout << "\n=== DeleteMany Test ===" << endl;
 
     JsonValue* filter = JsonParser::parse(
         "{\"age\":23}"
@@ -59,7 +106,7 @@ int main() {
         storage.find("users", all);
     }
 
-    delete all;
+    delete all;*/
 
 
 
