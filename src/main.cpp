@@ -1,6 +1,7 @@
 #include "schema.hpp"
 #include "jsonparser.hpp"
 #include "storage.hpp"
+#include "commandparser.hpp"
 #include <iostream>
 
 using namespace std;
@@ -38,7 +39,35 @@ int main() {
 
     Storage storage(&db_schema);
 
-    cout << "\n=== Combined Test ===" << endl;
+
+    CommandParser parser(&storage);
+
+    cout << "\n=== Command Parser Test ===" << endl;
+
+    parser.execute(
+        "db.users.find({\"age\":{\"$gt\":20}})"
+    );
+
+    cout << endl;
+
+    parser.execute(
+        "db.users.update_one("
+        "{\"id\":1},"
+        "{\"$set\":{\"name\":\"Alice\",\"age\":25}})"
+    );
+
+    cout << endl;
+
+    parser.execute(
+        "db.users.find({\"name\":\"Hello, world\"})"
+    );
+
+    cout << endl;
+
+    parser.execute("db.users.find({},)");
+
+
+    /*cout << "\n=== Combined Test ===" << endl;
 
     JsonValue* sortFilter = JsonParser::parse(
         "{\"age\":{\"$gt\":20}}"
@@ -57,7 +86,7 @@ int main() {
         false
     );
 
-    delete sortFilter;
+    delete sortFilter;*/
     /*cout << "\n=== Sort Test ===" << endl;
 
     JsonValue* filter = JsonParser::parse("{}");
