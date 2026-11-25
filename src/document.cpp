@@ -11,7 +11,13 @@ JsonValue::JsonValue(const string& text) : JsonValue(){
 
 JsonValue::~JsonValue(){
     delete child;
-    delete next;
+
+    while (next != nullptr){
+        JsonValue* node = next;
+        next = node->next;
+        node->next = nullptr;
+        delete node;
+    }
 }
 
 JsonType JsonValue::getType() const {
@@ -137,9 +143,10 @@ bool JsonValue::copyFrom(const JsonValue* other){
         newTail = node;
         current = current->next;
     }
-    delete child;
     type = other->type;
     value = other->value;
+
+    delete child;
     child = newChild;
 
     return true;

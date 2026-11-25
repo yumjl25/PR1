@@ -5,7 +5,7 @@
 class JsonParser{
 private:
     static void skipWhitespace(const std::string& json, size_t& pos);
-    static std::string parseString(const std::string& json, size_t& pos);
+    static bool parseString(const std::string& json, size_t& pos, std::string& result);
     static JsonValue* parseValue(const std::string& json, size_t& pos);
     static JsonValue* parseObject(const std::string& json, size_t& pos);
     static JsonValue* parseArray(const std::string& json, size_t& pos);

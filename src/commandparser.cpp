@@ -5,10 +5,8 @@
 
 using namespace std;
 
-CommandParser::CommandParser(Storage* storage){
-    this->storage = storage;
-}
-
+CommandParser::CommandParser(Storage* storage) : storage(storage){}
+ 
 string CommandParser::trim(const string& text) const {
     size_t start = 0;
     size_t end = text.size();
@@ -26,7 +24,7 @@ string CommandParser::trim(const string& text) const {
 bool CommandParser::parseCommand(const string& command, string& collection, string& operation, string& arguments) const {
     string text = trim(command);
 
-    if (!text.empty() && text.back() == ':'){
+    if (!text.empty() && text.back() == ';'){
         text = trim(text.substr(0, text.size() - 1));
     }
 
@@ -154,7 +152,7 @@ bool CommandParser::splitArguments(const string& text, List& arguments) const {
 
 
 bool CommandParser::execute(const string& command){
-
+    if (storage == nullptr) return false;
     string collection;
     string operation;
     string argumentsText;
@@ -303,24 +301,23 @@ bool CommandParser::executeFind(const string& collection, const string& operatio
     }
 
     if (size >= 4 && valid){
-        string text;
-        if (!arguments.getAt(3, text) || text.empty()){
+        JsonValue* value = parseArgument(arguments, 3);
+
+        if (value == nullptr || value->getType() != JSON_INT){
             valid = false;
-        } else {
-            for (size_t i = 0; i < text.size(); i++){
-                char c = text[i];
-                if (c < '0' || c > '9'){
-                    valid = false;
-                    break;
+        }else{
+            string text = value->getValue();
+
+            if (text.empty() || text[0] == '-'){
+                valid = false;
+            }else{
+                for (char c : text){
+                    limit = limit * 10 + (c - '0');
                 }
-                int digit = c - '0';
-                if (limit > (INT_MAX - digit) / 10) {
-                    valid = false;
-                    break;
-                }
-                limit = limit * 10 + digit;
             }
         }
+
+        delete value;
     }
 
     if (!valid){
@@ -463,8 +460,10 @@ bool CommandParser::executeDelete(const string& collection, const string& operat
 }
 
 bool CommandParser::executeInsert(const string& collection, const string& operation, const List& arguments){
-    if (operation == "insert_many") {
-        if (arguments.getSize() != 1) {
+    int size = arguments.getSize();
+
+    if (operation == "insert_many"){
+        if (size != 1){
             cerr << "Invalid arguments count" << endl;
             return false;
         }
@@ -480,56 +479,45 @@ bool CommandParser::executeInsert(const string& collection, const string& operat
         int count = storage->insertMany(collection, documents);
         delete documents;
 
-        if (count < 0) {
-            return false;
-        }
+        if (count < 0) return false;
 
         cout << "Inserted: " << count << endl;
-
         return true;
     }
 
-    if (arguments.getSize() == 1){
-    JsonValue* document = parseArgument(arguments, 0);
-
-    if (document == nullptr || document->getType() != JSON_OBJECT){
-        delete document;
-        cerr << "Invalid document" << endl;
-        return false;
-    }
-
-    bool success = storage->insertOne(collection, document);
-
-    delete document;
-
-    if (success){
-        cout << "Inserted: 1" << endl;
-    }
-
-    return success;
-}
-
-    if (arguments.getSize() != 2){
+    if (size != 1 && size != 2){
         cerr << "Invalid arguments count" << endl;
         return false;
     }
 
-    JsonValue* key = parseArgument(arguments, 0);
-    JsonValue* document = parseArgument(arguments, 1);
+    JsonValue* document = parseArgument(arguments, size - 1);
+    JsonValue* key = nullptr;
 
-    if (key == nullptr || document == nullptr || key->getType() != JSON_STRING || document->getType() != JSON_OBJECT){
-        delete key;
+    if (size == 2){
+        key = parseArgument(arguments, 0);
+    }
+
+    if (document == nullptr || document->getType() != JSON_OBJECT || (size == 2 && (key == nullptr || key->getType() != JSON_STRING))){
         delete document;
+        delete key;
         cerr << "Invalid insert arguments" << endl;
-
         return false;
     }
 
-    bool success = storage->insertOne(collection, key->getValue(), document);
-    delete key;
+    bool success;
+
+    if (size == 1){
+        success = storage->insertOne(collection, document);
+    }else{
+        success = storage->insertOne(collection, key->getValue(), document);
+    }
+
     delete document;
+    delete key;
+
     if (success){
         cout << "Inserted: 1" << endl;
     }
+
     return success;
 }

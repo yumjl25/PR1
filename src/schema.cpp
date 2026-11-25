@@ -1,6 +1,5 @@
 #include "schema.hpp"
 #include "jsonparser.hpp"
-#include "list.hpp"
 #include <sys/stat.h>
 #include <cerrno>
 #ifdef _WIN32
@@ -160,15 +159,6 @@ static bool validateFields(const JsonValue* fields){
             if (type != "int" && type != "str" && type != "time_stamp" && type != "array"){
                 return false;
             }
-        }
-
-        const JsonValue* next = current->getNext();
-
-        while (next != nullptr){
-            if (next->getKey() == current->getKey()){
-                return false;
-            }
-            next = next->getNext();
         }
 
         current = current->getNext();

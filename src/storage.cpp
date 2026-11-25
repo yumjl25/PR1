@@ -105,6 +105,14 @@ bool Storage::validateFields(const JsonValue* fields, const JsonValue* document)
                 cerr << "Invalid type for field: " << name << endl;
                 return false;
             }
+            if (type == "int"){
+                int32_t number;
+
+                if (!parseInt32(field->getValue(), number)){
+                    cerr << "Invalid integer: " << name << endl;
+                    return false;
+                }
+            }
         }
 
         current = current->getNext();
@@ -153,23 +161,41 @@ KeySearchResult Storage::keyExists(const string& collectionName, const string& k
 }
 
 string Storage::generateKey(const string& collectionName) const {
-    int number = 1;
+    int maxNumber = 0;
+    int fileNumber = 1;
 
     while (true){
-        string key = "doc_" + to_string(number);
+        string filename = getFilePath(collectionName, fileNumber);
 
-        KeySearchResult result = keyExists(collectionName, key);
+        if (!fileExists(filename)) break;
 
-        if (result == KEY_NOT_FOUND){
-            return key;
+        JsonValue* root = storageLoadFile(filename);
+
+        if (root == nullptr) return "";
+
+        const JsonValue* current = root->getChild();
+
+        while (current != nullptr){
+            string key = current->getKey();
+
+            if (key.substr(0, 4) == "doc_"){
+                int32_t number;
+
+                if (parseInt32(key.substr(4), number) && number > maxNumber){
+                    maxNumber = number;
+                }
+            }
+
+            current = current->getNext();
         }
 
-        if (result == KEY_ERROR || number == INT_MAX){
-            return "";
-        }
-
-        number++;
+        delete root;
+        fileNumber++;
     }
+
+    if (maxNumber == INT_MAX) return "";
+
+    return "doc_" + to_string(maxNumber + 1);
 }
 
 bool Storage::writeFile(const string& filename, const string& content) const {
@@ -241,7 +267,6 @@ bool Storage::insertOne(const std::string& collectionName, const std::string& ke
     int fileNumber = 1;
     while(true){
         string filename = getFilePath(collectionName, fileNumber);
-        ifstream file(filename);
 
         JsonValue* root = nullptr;
 
@@ -283,13 +308,9 @@ bool Storage::insertOne(const std::string& collectionName, const std::string& ke
         
         string resultJson = JsonParser::stringify(root);
 
-        bool success = writeFile(filename, resultJson);
+        bool success = writeFile(filename, JsonParser::stringify(root));
         delete root;
-        if (!success) {
-            cerr << "Error saving document!" << endl;
-            return false;
-        }
-        return true;
+        return success;
 
     }
     return true;
@@ -469,52 +490,45 @@ bool Storage::findOne(const string& collectionName, const JsonValue* filter) con
 
 
 bool Storage::compareValues(const JsonValue* first, const JsonValue* second, const string& op) const {
-    if (first == nullptr || second == nullptr){
-        return false;
-    }
+    if (first == nullptr || second == nullptr) return false;
 
-    if (first->getType() != second->getType()){
-        return false;
-    }
+    if (first->getType() != second->getType()) return false;
 
     JsonType type = first->getType();
+    int cmp = 0;
 
-    if (type == JSON_INT) {
-        int32_t a;
-        int32_t b;
+    if (type == JSON_INT){
+        int32_t a, b;
 
-        if (!parseInt32(first->getValue(), a) || !parseInt32(second->getValue(), b)) {
-            return false;
-        }
+        if (!parseInt32(first->getValue(), a) || !parseInt32(second->getValue(), b)) return false;
 
-        if (op == "$eq") return a == b;
-        if (op == "$ne") return a != b;
-        if (op == "$gt") return a > b;
-        if (op == "$lt") return a < b;
-        if (op == "$gte") return a >= b;
-        if (op == "$lte") return a <= b;
+        if (a < b) cmp = -1;
+        else if (a > b) cmp = 1;
     }
-    else if (type == JSON_STRING) {
+    else if (type == JSON_STRING){
         string a = first->getValue();
         string b = second->getValue();
 
-        if (op == "$eq") return a == b;
-        if (op == "$ne") return a != b;
-        if (op == "$gt") return a > b;
-        if (op == "$lt") return a < b;
-        if (op == "$gte") return a >= b;
-        if (op == "$lte") return a <= b;
+        if (a < b) cmp = -1;
+        else if (a > b) cmp = 1;
     }
-    else if (type == JSON_NULL) {
-        if (op == "$eq") return true;
-        if (op == "$ne") return false;
+    else if (type == JSON_OBJECT || type == JSON_ARRAY || type == JSON_NULL){
+        if (op != "$eq" && op != "$ne") return false;
+
+        bool equal = JsonParser::stringify(first) == JsonParser::stringify(second);
+
+        return op == "$eq" ? equal : !equal;
     }
-    else if (type == JSON_OBJECT || type == JSON_ARRAY) {
-        if (op == "$eq" || op == "$ne") {
-            bool equal = JsonParser::stringify(first) == JsonParser::stringify(second);
-            return op == "$eq" ? equal : !equal;
-        }
+    else{
+        return false;
     }
+
+    if (op == "$eq") return cmp == 0;
+    if (op == "$ne") return cmp != 0;
+    if (op == "$gt") return cmp > 0;
+    if (op == "$lt") return cmp < 0;
+    if (op == "$gte") return cmp >= 0;
+    if (op == "$lte") return cmp <= 0;
 
     return false;
 }

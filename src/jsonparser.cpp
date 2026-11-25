@@ -1,6 +1,7 @@
 #include "jsonparser.hpp"
 #include <cctype>
 #include <climits>
+#include <cstdint>
 
 using namespace std;
 
@@ -10,23 +11,24 @@ void JsonParser::skipWhitespace(const string& json, size_t& pos){
     }
 }
 
-string JsonParser::parseString(const string& json, size_t& pos){
-    string result = "";
-    if(pos >= json.length() || json[pos] != '"'){
-        return "";
-    }
+bool JsonParser::parseString(const string& json, size_t& pos, string& result){
+    result.clear();
+
+    if (pos >= json.length() || json[pos] != '"') return false;
+
     pos++;
+
     while (pos < json.length()){
         char c = json[pos++];
-        if (c == '"'){
-            return result;
-        }
+
+        if (c == '"') return true;
+
         if (c == '\\'){
-            if (pos >= json.length()){
-                return "";
-            }
+            if (pos >= json.length()) return false;
+
             char escaped = json[pos++];
-            switch (escaped) {
+
+            switch (escaped){
                 case '"': result += '"'; break;
                 case '\\': result += '\\'; break;
                 case '/': result += '/'; break;
@@ -35,14 +37,16 @@ string JsonParser::parseString(const string& json, size_t& pos){
                 case 'r': result += '\r'; break;
                 case 'b': result += '\b'; break;
                 case 'f': result += '\f'; break;
-                default: return "";
+                default: return false;
             }
         }else{
-            if ((unsigned char)c < 32) return "";
+            if ((unsigned char)c < 32) return false;
+
             result += c;
         }
     }
-    return "";
+
+    return false;
 }
 
 JsonValue* JsonParser::parseObject(const string& json, size_t& pos){
@@ -67,7 +71,12 @@ JsonValue* JsonParser::parseObject(const string& json, size_t& pos){
             return nullptr;
         }
 
-        string key = parseString(json, pos);
+        string key;
+
+        if (!parseString(json, pos, key) || object->find(key) != nullptr){
+            delete object;
+            return nullptr;
+        }
         skipWhitespace(json, pos);
 
         if (pos >= json.length() || json[pos] != ':'){
@@ -166,9 +175,10 @@ JsonValue* JsonParser::parseValue(const string& json, size_t& pos) {
         return parseArray(json, pos);
     }
 
-    if (json[pos] == '"') {
-        string text = parseString(json, pos);
-        return new JsonValue(text);
+    if (json[pos] == '"'){
+    string text;
+    if (!parseString(json, pos, text)) return nullptr;
+    return new JsonValue(text);
     }
 
     if (json.compare(pos, 4, "null") == 0) {
@@ -176,39 +186,37 @@ JsonValue* JsonParser::parseValue(const string& json, size_t& pos) {
         return new JsonValue();
     }
 
-    if (json[pos] == '-' || isdigit((unsigned char)json[pos])) {
+    if (json[pos] == '-' || isdigit((unsigned char)json[pos])){
         bool negative = false;
 
-        if (json[pos] == '-') {
+        if (json[pos] == '-'){
             negative = true;
             pos++;
         }
 
-        if (pos >= json.length() ||
-            !isdigit((unsigned char)json[pos])) {
-            return nullptr;
-        }
+        if (pos >= json.length() || !isdigit((unsigned char)json[pos])) return nullptr;
 
-        long long number = 0;
-        long long limit = negative
-            ? -(long long)INT_MIN
-            : INT_MAX;
+        if (json[pos] == '0' && pos + 1 < json.length() && isdigit((unsigned char)json[pos + 1])) return nullptr;
 
-        while (pos < json.length() &&
-               isdigit((unsigned char)json[pos])) {
-            int digit = json[pos] - '0';
+        int32_t number = 0;
 
-            if (number > (limit - digit) / 10) {
-                return nullptr;
+        while (pos < json.length() && isdigit((unsigned char)json[pos])){
+            int32_t digit = json[pos] - '0';
+
+            if (negative){
+                if (number < (INT32_MIN + digit) / 10) return nullptr;
+
+                number = number * 10 - digit;
+            }else{
+                if (number > (INT32_MAX - digit) / 10) return nullptr;
+
+                number = number * 10 + digit;
             }
 
-            number = number * 10 + digit;
             pos++;
         }
 
-        if (negative) number = -number;
-
-        return new JsonValue((int)number);
+        return new JsonValue(number);
     }
 
     return nullptr;

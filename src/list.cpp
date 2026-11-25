@@ -157,10 +157,23 @@ bool List::getTail(string& out) const {
 
 bool List::getAt(int index, string& out) const {
     if (index < 0 || index >= size) return false;
-    LNode* cur = head;
-    for (int i = 0; i < index; i++) {
-        cur = cur->next;
+
+    LNode* cur;
+
+    if (index < size / 2){
+        cur = head;
+
+        for (int i = 0; i < index; i++){
+            cur = cur->next;
+        }
+    }else{
+        cur = tail;
+
+        for (int i = size - 1; i > index; i--){
+            cur = cur->prev;
+        }
     }
+
     out = cur->data;
     return true;
 }
@@ -177,47 +190,3 @@ void List::print() const {
     cout << endl;
 }
 
-void List::saveToBinary(const string& filename) const {
-    ofstream file(filename, ios::binary);
-    if (!file.is_open()) return;
-
-    file.write(reinterpret_cast<const char*>(&size), sizeof(size));
-
-    LNode* cur = head;
-    while (cur != nullptr) {
-        int len = cur->data.length();
-        file.write(reinterpret_cast<const char*>(&len), sizeof(len));
-        file.write(cur->data.c_str(), len);
-        cur = cur->next;
-    }
-    file.close();
-}
-
-void List::loadFromBinary(const string& filename) {
-    ifstream file(filename, ios::binary);
-    if (!file.is_open()) return;
-
-    while (head != nullptr) {
-        LNode* temp = head;
-        head = head->next;
-        delete temp;
-    }
-    head = nullptr;
-    tail = nullptr;
-    size = 0;
-
-    int new_size = 0;
-    if (!file.read(reinterpret_cast<char*>(&new_size), sizeof(new_size))) {
-        file.close();
-        return;
-    }
-
-    for (int i = 0; i < new_size; i++) {
-        int len;
-        file.read(reinterpret_cast<char*>(&len), sizeof(len));
-        string s(len, '\0');
-        file.read(&s[0], len);
-        pushTail(s);
-    }
-    file.close();
-}
