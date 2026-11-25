@@ -183,7 +183,7 @@ bool CommandParser::execute(const string& command){
         return executeDelete(collection, operation, arguments);
     }
 
-    if (operation == "insert_one" || operation == "insert_many"){
+    if (operation == "insert" || operation == "insert_one" || operation == "insert_many"){
         return executeInsert(collection, operation, arguments);
     }
     cerr << "Unknown operation: " << operation << endl;
@@ -237,22 +237,50 @@ bool CommandParser::executeFind(const string& collection, const string& operatio
     int limit = 0;
 
     if (size >= 2){
+        string text;
+        arguments.getAt(1, text);
 
-        JsonValue* fields = parseArgument(arguments, 1);
+        size_t pos = text.find('=');
 
-        if (fields == nullptr || fields->getType() != JSON_OBJECT) {
+        if (pos != string::npos && trim(text.substr(0, pos)) == "projection"){
+            text = trim(text.substr(pos + 1));
+        }
+
+        JsonValue* fields = JsonParser::parse(text);
+
+        if (fields == nullptr){
             valid = false;
-        } else {
+        }
+        else if (fields->getType() == JSON_ARRAY){
             const JsonValue* current = fields->getChild();
-            while (current != nullptr) {
+
+            while (current != nullptr){
+                if (current->getType() != JSON_STRING || current->getValue().empty()){
+                    valid = false;
+                    break;
+                }
+
+                projection.pushTail(current->getValue());
+                current = current->getNext();
+            }
+        }
+        else if (fields->getType() == JSON_OBJECT){
+            const JsonValue* current = fields->getChild();
+
+            while (current != nullptr){
                 if (current->getType() != JSON_INT || current->getValue() != "1"){
                     valid = false;
                     break;
                 }
+
                 projection.pushTail(current->getKey());
                 current = current->getNext();
             }
         }
+        else{
+            valid = false;
+        }
+
         delete fields;
     }
 
@@ -325,9 +353,38 @@ bool CommandParser::executeFind(const string& collection, const string& operatio
 }
 
 bool CommandParser::executeUpdate(const string& collection, const string& operation, const List& arguments){
-    if (arguments.getSize() != 2){
+    int size = arguments.getSize();
+
+    if (size < 2 || size > 3 || (size == 3 && operation != "update")){
         cerr << "Invalid arguments count" << endl;
         return false;
+    }
+
+    bool multi = (operation == "update_many");
+
+    if (size == 3){
+        string text;
+        arguments.getAt(2, text);
+
+        size_t pos = text.find('=');
+
+        if (pos == string::npos || trim(text.substr(0, pos)) != "multi"){
+            cerr << "Invalid multi argument" << endl;
+            return false;
+        }
+
+        string value = trim(text.substr(pos + 1));
+
+        if (value == "True" || value == "true"){
+            multi = true;
+        }
+        else if (value == "False" || value == "false"){
+            multi = false;
+        }
+        else{
+            cerr << "Invalid multi value" << endl;
+            return false;
+        }
     }
 
     JsonValue* filter = parseArgument(arguments, 0);
@@ -341,7 +398,7 @@ bool CommandParser::executeUpdate(const string& collection, const string& operat
     }
 
     bool success;
-    if (operation == "update_one"){
+    if (!multi){
         success = storage->updateOne(collection, filter, update);
         if (success){
         cout << "Updated: 1" << endl;
@@ -414,7 +471,7 @@ bool CommandParser::executeInsert(const string& collection, const string& operat
 
         JsonValue* documents = parseArgument(arguments, 0);
 
-        if (documents == nullptr || documents->getType() != JSON_OBJECT){
+        if (documents == nullptr || (documents->getType() != JSON_OBJECT && documents->getType() != JSON_ARRAY)){
             delete documents;
             cerr << "Invalid documents" << endl;
             return false;
@@ -431,6 +488,26 @@ bool CommandParser::executeInsert(const string& collection, const string& operat
 
         return true;
     }
+
+    if (arguments.getSize() == 1){
+    JsonValue* document = parseArgument(arguments, 0);
+
+    if (document == nullptr || document->getType() != JSON_OBJECT){
+        delete document;
+        cerr << "Invalid document" << endl;
+        return false;
+    }
+
+    bool success = storage->insertOne(collection, document);
+
+    delete document;
+
+    if (success){
+        cout << "Inserted: 1" << endl;
+    }
+
+    return success;
+}
 
     if (arguments.getSize() != 2){
         cerr << "Invalid arguments count" << endl;

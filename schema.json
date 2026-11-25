@@ -2,6 +2,14 @@
     "name": "Schema 1",
     "tuples_limit": 1000,
     "structure": {
+        "test": {
+            "id": "int",
+            "address": {
+                "city": "str",
+                "house": "int"
+            },
+            "tags": "array"
+        },
         "users": {
             "id": "int",
             "name": "str",

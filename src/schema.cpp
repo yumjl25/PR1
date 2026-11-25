@@ -1,193 +1,353 @@
-#include "../include/schema.hpp"
+#include "schema.hpp"
+#include "jsonparser.hpp"
+#include "list.hpp"
 #include <sys/stat.h>
+#include <cerrno>
+#ifdef _WIN32
+#include <direct.h>
+#endif
+#include <fstream>
 #include <iostream>
-#include <cctype>
+#include <climits>
 
 using namespace std;
 
-
-static void skip_ws(const string& s, size_t& pos) {
-    while (pos < s.length() && isspace((unsigned char)s[pos])) pos++;
+Collection::Collection() : name(""){
+    fields.setObject();
 }
 
-static string read_string(const string& s, size_t& pos) {
-    skip_ws(s, pos);
-    if (pos >= s.length() || s[pos] != '"') return ""; 
-    pos++; 
-    size_t start = pos;
-    while (pos < s.length() && s[pos] != '"') pos++; 
-    string result = s.substr(start, pos - start);
-    if (pos < s.length()) pos++; 
-    return result;
+Collection::Collection(const string& n) : name(n){
+    fields.setObject();
 }
 
-static int read_int(const string& s, size_t& pos) {
-    skip_ws(s, pos);
-    int val = 0;
-    while (pos < s.length() && isdigit((unsigned char)s[pos])) {
-        val = val * 10 + (s[pos] - '0');
-        pos++;
+void Collection::setName(const string& n){
+    name = n;
+}
+
+string Collection::getName() const {
+    return name;
+}
+
+void Collection::addField(const string& fieldName, const string& typeName){
+    JsonValue* field = new JsonValue(typeName);
+    field->setKey(fieldName);
+    fields.addChild(field);
+}
+
+const JsonValue* Collection::getField(int index) const{
+    if (index < 0) {
+        return nullptr;
     }
-    return val;
-}
 
+    const JsonValue* current = fields.getChild();
 
-Schema::Schema() : name(""), tuples_limit(0), collection_count(0) {
-    for (int i = 0; i < MAX_COLLECTIONS; i++) {
-        collections[i] = nullptr;
+    while (current != nullptr && index > 0){
+        current = current->getNext();
+        index--;
     }
+
+    return current;
 }
+
+int Collection::getFieldCount() const {
+    int count = 0;
+
+    const JsonValue* current = fields.getChild();
+
+    while (current != nullptr) {
+        count++;
+        current = current->getNext();
+    }
+
+    return count;
+}
+
+string Collection::getFieldName(int index) const {
+    const JsonValue* field = getField(index);
+
+    if (field == nullptr) {
+        return "";
+    }
+
+    return field->getKey();
+}
+
+string Collection::getFieldType(int index) const {
+    const JsonValue* field = getField(index);
+
+    if (field == nullptr) {
+        return "";
+    }
+
+    if (field->getType() == JSON_OBJECT) {
+        return "object";
+    }
+
+    return field->getValue();
+}
+
+bool Collection::setFields(const JsonValue* source){
+    if (source == nullptr || source->getType() != JSON_OBJECT){
+        return false;
+    }
+
+    return fields.copyFrom(source);
+}
+
+const JsonValue* Collection::getFields() const {
+    return &fields;
+}
+
+Schema::Schema() : name(""), tuples_limit(0), collections(nullptr), collection_count(0) {}
 
 Schema::~Schema() {
-    for (int i = 0; i < collection_count; i++) {
-        if (collections[i] != nullptr) {
-            delete collections[i];
-        }
+    clear();
+}
+
+void Schema::clear() {
+    for (int i = 0; i < collection_count; i++){
+        delete collections[i];
     }
+
+    delete[] collections;
+
+    collections = nullptr;
+    collection_count = 0;
+    tuples_limit = 0;
+    name.clear();
 }
 
 Collection* Schema::getCollection(int index) const {
-    if (index >= 0 && index < collection_count) {
-        return collections[index];
+    if (index < 0 || index >= collection_count) {
+        return nullptr;
     }
-    return nullptr;
+
+    return collections[index];
 }
 
 Collection* Schema::findCollection(const string& collName) const {
-    for (int i = 0; i < collection_count; i++) {
-        if (collections[i]->getName() == collName) {
+    for (int i = 0; i < collection_count; i++){
+        if (collections[i]->getName() == collName){
             return collections[i];
         }
     }
+
     return nullptr;
+}
+
+static bool validateFields(const JsonValue* fields){
+    if (fields == nullptr || fields->getType() != JSON_OBJECT){
+        return false;
+    }
+
+    const JsonValue* current = fields->getChild();
+    while (current != nullptr){
+        if (current->getKey().empty()){
+            return false;
+        }
+
+        if (current->getType() == JSON_OBJECT){
+            if (!validateFields(current)){
+                return false;
+            }
+        } else {
+            if (current->getType() != JSON_STRING){
+                return false;
+            }
+
+            string type = current->getValue();
+
+            if (type != "int" && type != "str" && type != "time_stamp" && type != "array"){
+                return false;
+            }
+        }
+
+        const JsonValue* next = current->getNext();
+
+        while (next != nullptr){
+            if (next->getKey() == current->getKey()){
+                return false;
+            }
+            next = next->getNext();
+        }
+
+        current = current->getNext();
+    }
+
+    return true;
 }
 
 bool Schema::loadFromFile(const string& filename) {
     ifstream file(filename);
-    if (!file.is_open()) {
-        cerr << "Error: cannot open " << filename << endl;
+
+    if (!file.is_open()){
+        cerr << "Cannot open: " << filename << endl;
         return false;
     }
 
-    string json = "";
+    string json;
     string line;
-    while (getline(file, line)) {
+
+    while (getline(file, line)){
         json += line + "\n";
     }
-    file.close();
 
-    if (json.empty()) {
-        cerr << "Error: file is empty!" << endl;
+    if (file.bad()){
         return false;
     }
 
-    size_t found_limit = json.find("\"tuples_limit\"");
-    if (found_limit != string::npos) {
-        size_t pos = found_limit + 14;
-        while (pos < json.length() && (json[pos] == ' ' || json[pos] == ':' || json[pos] == '\n')) pos++;
-        tuples_limit = read_int(json, pos);
+    file.close();
+
+    JsonValue* root = JsonParser::parse(json);
+
+    if (root == nullptr || root->getType() != JSON_OBJECT) {
+        delete root;
+        cerr << "Invalid schema JSON" << endl;
+        return false;
     }
 
-    size_t found_name = json.find("\"name\"");
-    if (found_name != string::npos && found_name < found_limit) {
-        size_t pos = found_name + 6;
-        while (pos < json.length() && (json[pos] == ' ' || json[pos] == ':' || json[pos] == '\n')) pos++;
-        name = read_string(json, pos);
+    const JsonValue* schemaName = root->find("name");
+    const JsonValue* limit = root->find("tuples_limit");
+    const JsonValue* structure = root->find("structure");
+
+    if (schemaName == nullptr ||
+        schemaName->getType() != JSON_STRING ||
+        schemaName->getValue().empty() ||
+        limit == nullptr ||
+        limit->getType() != JSON_INT ||
+        structure == nullptr ||
+        structure->getType() != JSON_OBJECT){
+
+        delete root;
+        cerr << "Invalid schema structure" << endl;
+        return false;
     }
 
-    size_t found_struct = json.find("\"structure\""); 
-    if (found_struct != string::npos) {
-        size_t pos = found_struct + 11; 
-        while (pos < json.length() && (json[pos] == ' ' || json[pos] == ':' || json[pos] == '\n')) pos++;
-        
-        if (pos < json.length() && json[pos] == '{') {
-            pos++;
-            
-            while (pos < json.length()) {
-                while (pos < json.length() && (json[pos] == ' ' || json[pos] == ',' || json[pos] == '\n')) pos++;
-                if (pos >= json.length()) break;
-                if (json[pos] == '}') { pos++; break; }
+    string limitText = limit->getValue();
+    int parsedLimit = 0;
 
-                string coll_name = read_string(json, pos);
-                if (coll_name.empty()) { pos++; continue; } 
-
-                while (pos < json.length() && (json[pos] == ' ' || json[pos] == ':' || json[pos] == '\n')) pos++;
-
-                if (pos < json.length() && json[pos] == '{') {
-                    pos++; 
-                    Collection* coll = new Collection(coll_name);
-
-                    while (pos < json.length()) {
-                        while (pos < json.length() && (json[pos] == ' ' || json[pos] == ',' || json[pos] == '\n')) pos++;
-                        if (pos >= json.length()) break;
-                        if (json[pos] == '}') { pos++; break; }
-
-                        string field_name = read_string(json, pos);
-                        if (field_name.empty()) { pos++; continue; }
-
-                        while (pos < json.length() && (json[pos] == ' ' || json[pos] == ':' || json[pos] == '\n')) pos++;
-                        
-                        string field_type = read_string(json, pos);
-                        if (field_type.empty()) { pos++; continue; }
-
-                        coll->addField(field_name, field_type);
-                    }
-
-                    if (collection_count < MAX_COLLECTIONS) {
-                        collections[collection_count++] = coll;
-                        collection_names.pushTail(coll_name);
-                    }
-                }
-            }
+    for (char c : limitText){
+        if (c < '0' || c > '9' || parsedLimit > (INT_MAX - (c - '0')) / 10){
+            delete root;
+            cerr << "Invalid tuples_limit" << endl;
+            return false;
         }
+
+        parsedLimit = parsedLimit * 10 + (c - '0');
     }
 
-    cout << "Debug: Parsed Name = '" << name << "', Tuples Limit = " << tuples_limit << endl;
+    if (parsedLimit <= 0 || !validateFields(structure)){
+        delete root;
+        cerr << "Invalid schema fields or limit" << endl;
+        return false;
+    }
+
+    int count = 0;
+    const JsonValue* current = structure->getChild();
+
+    while (current != nullptr){
+        if (current->getType() != JSON_OBJECT){
+            delete root;
+            cerr << "Invalid collection" << endl;
+            return false;
+        }
+
+        count++;
+        current = current->getNext();
+    }
+
+    clear();
+
+    name = schemaName->getValue();
+    tuples_limit = parsedLimit;
+
+    collections = new Collection*[count];
+
+    current = structure->getChild();
+
+    while (current != nullptr) {
+        Collection* coll = new Collection(current->getKey());
+        if (!coll->setFields(current)) {
+            delete coll;
+            delete root;
+            clear();
+            return false;
+        }
+
+        collections[collection_count++] = coll;
+
+        current = current->getNext();
+    }
+
+    delete root;
+
     return true;
 }
 
-
-void Schema::createDirectories() {
-    string main_dir = "data/" + name;
-
+static bool makeDirectory(const string& path) {
 #ifdef _WIN32
-    mkdir("data");
-    mkdir(main_dir.c_str());
+    int result = _mkdir(path.c_str());
 #else
-    mkdir("data", 0777);
-    mkdir(main_dir.c_str(), 0777);
+    int result = mkdir(path.c_str(), 0777);
 #endif
 
-    for (int i = 0; i < collection_count; i++) {
-        Collection* coll = collections[i];
+    if (result == 0) {
+        return true;
+    }
 
-        string coll_dir = main_dir + "/" + coll->getName();
+    if (errno != EEXIST) {
+        return false;
+    }
 
-#ifdef _WIN32
-        mkdir(coll_dir.c_str());
-#else
-        mkdir(coll_dir.c_str(), 0777);
-#endif
+    struct stat info;
 
-        string file_path = coll_dir + "/1.json";
+    return stat(path.c_str(), &info) == 0 &&
+           (info.st_mode & S_IFMT) == S_IFDIR;
+}
 
-        ifstream check(file_path);
+void Schema::createDirectories(){
+    string mainDir = "data/" + name;
 
-        if (check.is_open()) {
-            check.close();
-            cout << "File already exists: " << file_path << endl;
-        } else {
-            ofstream out(file_path);
+    if (!makeDirectory("data") || !makeDirectory(mainDir)){
+        cerr << "Cannot create database directory" << endl;
+        return;
+    }
 
-            if (out.is_open()) {
-                out.close();
-                cout << "Created: " << file_path << endl;
-            } else {
-                cerr << "Error creating: " << file_path << endl;
-            }
+    for (int i = 0; i < collection_count; i++){
+        string collDir = mainDir + "/" + collections[i]->getName();
+        if (!makeDirectory(collDir)) {
+            cerr << "Cannot create: " << collDir << endl;
+            return;
+        }
+
+        string filePath = collDir + "/1.json";
+
+        struct stat info;
+
+        if (stat(filePath.c_str(), &info) == 0) {
+            continue;
+        }
+
+        if (errno != ENOENT) {
+            cerr << "Cannot access: " << filePath << endl;
+            return;
+        }
+
+        ofstream out(filePath);
+
+        if (!out.is_open()) {
+            cerr << "Cannot create: " << filePath << endl;
+            return;
+        }
+
+        out << "{}";
+        out.close();
+
+        if (out.fail()) {
+            cerr << "Cannot write: " << filePath << endl;
+            return;
         }
     }
 
-    cout << "Database structure ready in '"
-         << main_dir << "'" << endl;
+    cout << "Database structure ready" << endl;
 }

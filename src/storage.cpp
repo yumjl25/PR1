@@ -71,39 +71,54 @@ bool Storage::fileExists(const string& filename) const {
     return file.is_open();
 }
 
-bool Storage::validateDocument(const Collection* collection, const JsonValue* document) const {
-    if (collection == nullptr || document == nullptr) return false;
-    if (document->getType() != JSON_OBJECT) return false;
+bool Storage::validateFields(const JsonValue* fields, const JsonValue* document) const {
+    if (fields == nullptr || document == nullptr){
+        return false;
+    }
 
-    for (int i = 0; i < collection->getFieldCount(); i++){
-        string fieldName = collection->getFieldName(i);
-        string fieldType = collection->getFieldType(i);
+    if (fields->getType() != JSON_OBJECT || document->getType() != JSON_OBJECT){
+        return false;
+    }
 
-        JsonValue* field = document->find(fieldName);
+    const JsonValue* current = fields->getChild();
+
+    while (current != nullptr){
+        string name = current->getKey();
+
+        const JsonValue* field = document->find(name);
 
         if (field == nullptr){
-            cerr << "Missing field: " << fieldName << endl;
+            cerr << "Missing field: " << name << endl;
             return false;
         }
 
-        if (fieldType == "int"){
-            if (field->getType() != JSON_INT){
-                cerr << "Invalid type for field: " << fieldName << endl;
+        if (current->getType() == JSON_OBJECT){
+            if (!validateFields(current, field)){
                 return false;
             }
         }
-        else if(fieldType == "str" || fieldType == "time_stamp"){
-            if (field->getType() != JSON_STRING){
-                cerr << "Invalid type for field: " << fieldName << endl;
+        else {
+            string type = current->getValue();
+
+            bool valid =(type == "int" && field->getType() == JSON_INT) || ((type == "str" || type == "time_stamp") && field->getType() == JSON_STRING) || (type == "array" && field->getType() == JSON_ARRAY);
+            if (!valid){
+                cerr << "Invalid type for field: " << name << endl;
                 return false;
             }
         }
-        else{
-            cerr << "Unsupported field type: " << fieldType << endl;
-            return false;
-        }
+
+        current = current->getNext();
     }
+
     return true;
+}
+
+bool Storage::validateDocument(const Collection* collection, const JsonValue* document) const {
+    if (collection == nullptr){
+        return false;
+    }
+
+    return validateFields(collection->getFields(), document);
 }
 
 
@@ -117,38 +132,9 @@ KeySearchResult Storage::keyExists(const string& collectionName, const string& k
             break;
         }
 
-        ifstream file(filename);
+        JsonValue* root = storageLoadFile(filename);
 
-        if (!file.is_open()){
-            cerr << "Cannot open file: " << filename << endl;
-            return KEY_ERROR;
-        }
-
-        string content = "";
-        string line;
-
-        while (getline(file, line)){
-            content += line;
-            content += '\n';
-        }
-
-        if (file.bad()) {
-            cerr << "Error reading file: " << filename << endl;
-            return KEY_ERROR;
-        }
-
-        file.close();
-
-        if (content.empty()){
-            fileNumber++;
-            continue;
-        }
-
-        JsonValue* root = JsonParser::parse(content);
-
-        if (root == nullptr || root->getType() != JSON_OBJECT){
-            delete root;
-            cerr << "Invalid storage file: " << filename << endl;
+        if (root == nullptr){
             return KEY_ERROR;
         }
 
@@ -156,7 +142,7 @@ KeySearchResult Storage::keyExists(const string& collectionName, const string& k
 
         delete root;
 
-        if (found) {
+        if (found){
             return KEY_FOUND;
         }
 
@@ -166,6 +152,25 @@ KeySearchResult Storage::keyExists(const string& collectionName, const string& k
     return KEY_NOT_FOUND;
 }
 
+string Storage::generateKey(const string& collectionName) const {
+    int number = 1;
+
+    while (true){
+        string key = "doc_" + to_string(number);
+
+        KeySearchResult result = keyExists(collectionName, key);
+
+        if (result == KEY_NOT_FOUND){
+            return key;
+        }
+
+        if (result == KEY_ERROR || number == INT_MAX){
+            return "";
+        }
+
+        number++;
+    }
+}
 
 bool Storage::writeFile(const string& filename, const string& content) const {
     string tempFilename = filename + ".tmp";
@@ -173,8 +178,7 @@ bool Storage::writeFile(const string& filename, const string& content) const {
     ofstream out(tempFilename, ios::binary | ios::trunc);
 
     if (!out.is_open()){
-        cerr << "Cannot create temporary file: "
-             << tempFilename << endl;
+        cerr << "Cannot create temporary file: " << tempFilename << endl;
         return false;
     }
 
@@ -239,28 +243,18 @@ bool Storage::insertOne(const std::string& collectionName, const std::string& ke
         string filename = getFilePath(collectionName, fileNumber);
         ifstream file(filename);
 
-        string content = "";
-        string line;
-
-        if (file.is_open()) {
-            while (getline(file, line)) {
-                content += line;
-            }
-            file.close();
-        }
-
         JsonValue* root = nullptr;
-        if (content.empty()){
+
+        if (fileExists(filename)){
+            root = storageLoadFile(filename);
+
+            if (root == nullptr){
+                return false;
+            }
+        }
+        else{
             root = new JsonValue();
             root->setObject();
-        }else{
-            root = JsonParser::parse(content);
-        }
-
-        if (root == nullptr || root->getType() != JSON_OBJECT){
-            delete root;
-            cerr << "Invalid storage file: " << filename << endl;
-            return false;
         }
 
         int count = 0;
@@ -276,19 +270,16 @@ bool Storage::insertOne(const std::string& collectionName, const std::string& ke
             continue;
         }
 
-        string documentJson = JsonParser::stringify(document);
-        JsonValue* copy =  JsonParser::parse(documentJson);
+        JsonValue* copy = new JsonValue();
 
-        if (copy == nullptr){
+        if (!copy->copyFrom(document)){
+            delete copy;
             delete root;
             return false;
         }
 
         copy->setKey(key);
         root->addChild(copy);
-
-        ofstream out(filename);
-
         
         string resultJson = JsonParser::stringify(root);
 
@@ -298,34 +289,65 @@ bool Storage::insertOne(const std::string& collectionName, const std::string& ke
             cerr << "Error saving document!" << endl;
             return false;
         }
-        cout << "Document inserted successfully!" << endl;
         return true;
 
     }
     return true;
 }
 
+bool Storage::insertOne(const string& collectionName, const JsonValue* document){
+    if (schema == nullptr || document == nullptr) return false;
+
+    if (schema->findCollection(collectionName) == nullptr){
+        cerr << "Collection not found" << endl;
+        return false;
+    }
+
+    string key = generateKey(collectionName);
+
+    if (key.empty()){
+        cerr << "Cannot generate primary key" << endl;
+        return false;
+    }
+
+    return insertOne(collectionName, key, document);
+}
+
 int Storage::insertMany(const string& collectionName, const JsonValue* documents){
-    if (documents == nullptr){
-        cerr << "Documents are null!" << endl;
-        return 0;
+    if (documents == nullptr || schema == nullptr){
+        return -1;
+    }
+
+    if (schema->findCollection(collectionName) == nullptr){
+        cerr << "Collection not found" << endl;
+        return -1;
+    }
+
+    if (documents->getType() != JSON_ARRAY && documents->getType() != JSON_OBJECT){
+        cerr << "Invalid documents type" << endl;
+        return -1;
     }
 
     int insertedCount = 0;
     const JsonValue* current = documents->getChild();
 
-    while(current != nullptr){
-        string key = current->getKey();
-        if (key.empty()){
-            cerr << "Document key cannot be empty!" << endl;
+    while (current != nullptr){
+        bool success = false;
+
+        if (documents->getType() == JSON_ARRAY){
+            success = insertOne(collectionName, current);
         }
-        else if(insertOne(collectionName, key, current)){
+        else{
+            success = insertOne(collectionName, current->getKey(), current);
+        }
+
+        if (success){
             insertedCount++;
         }
+
         current = current->getNext();
     }
 
-    cout << "Inserted " << insertedCount << " documents." << endl;
     return insertedCount;
 }
 
@@ -355,7 +377,16 @@ bool Storage::matchesFilter(const JsonValue* document, const JsonValue* filter) 
                 return false;
             }
 
-            const JsonValue* field = document->find(condition->getKey());
+            JsonValue primaryKey;
+            const JsonValue* field = nullptr;
+
+            if (key == "_id"){
+                primaryKey.setString(document->getKey());
+                field = &primaryKey;
+            }
+            else {
+                field = document->find(key);
+            }
 
             if (field == nullptr){
                 return false;
@@ -449,8 +480,12 @@ bool Storage::compareValues(const JsonValue* first, const JsonValue* second, con
     JsonType type = first->getType();
 
     if (type == JSON_INT) {
-        int a = stoi(first->getValue());
-        int b = stoi(second->getValue());
+        int32_t a;
+        int32_t b;
+
+        if (!parseInt32(first->getValue(), a) || !parseInt32(second->getValue(), b)) {
+            return false;
+        }
 
         if (op == "$eq") return a == b;
         if (op == "$ne") return a != b;
@@ -500,7 +535,7 @@ bool Storage::matchesCondition(const JsonValue* field, const JsonValue* conditio
         return compareValues(field, condition, "$eq");
     }
 
-    if (opNode->getKey()[0] != '$'){
+    if (opNode->getKey().empty() || opNode->getKey()[0] != '$'){
         return compareValues(field, condition, "$eq");
     }
 
@@ -526,9 +561,17 @@ bool Storage::matchesCondition(const JsonValue* field, const JsonValue* conditio
 
             if (!found) return false;
         }
-        else if (op == "$eq" || op == "$ne" ||
-                 op == "$gt" || op == "$lt" ||
-                 op == "$gte" || op == "$lte"){
+
+        else if (op == "$not"){
+            if (opNode->getType() != JSON_OBJECT || opNode->getChild() == nullptr) {
+                return false;
+            }
+            if (matchesCondition(field, opNode)) {
+                return false;
+            }
+        }
+
+        else if (op == "$eq" || op == "$ne" || op == "$gt" || op == "$lt" || op == "$gte" || op == "$lte"){
 
             if (!compareValues(field, opNode, op)){
                 return false;
@@ -649,8 +692,6 @@ JsonValue* Storage::storageLoadFile(const string& filename) const {
         return nullptr;
     }
 
-    file.close();
-
     if (content.empty()){
         cerr << "Empty storage file: " << filename << endl;
         return nullptr;
@@ -671,21 +712,18 @@ JsonValue* Storage::storageLoadFile(const string& filename) const {
     return root;
 }
 
+
 bool Storage::aplyUpdate(JsonValue* document, const JsonValue* update) const {
     if (document == nullptr || update == nullptr) return false;
 
-    if (document->getType() != JSON_OBJECT || update->getType() != JSON_OBJECT){
+    if (document->getType() != JSON_OBJECT || update->getType() != JSON_OBJECT || update->getChild() == nullptr){
         cerr << "Invalid update arguments" << endl;
         return false;
     }
 
-    if (update->getChild() == nullptr){
-        cerr << "Empty update" << endl;
-        return false;
-    }
-
     const JsonValue* current = update->getChild();
-    while (current != nullptr) {
+
+    while (current != nullptr){
         string op = current->getKey();
 
         if (op != "$set" && op != "$inc" && op != "$push"){
@@ -693,80 +731,60 @@ bool Storage::aplyUpdate(JsonValue* document, const JsonValue* update) const {
             return false;
         }
 
-        if (current->getType() != JSON_OBJECT) {
-            cerr << "Invalid update operator arguments: " << op << endl;
+        if (current->getType() != JSON_OBJECT){
+            cerr << "Invalid operator arguments: " << op << endl;
             return false;
         }
 
-        current = current->getNext();
-    }
+        const JsonValue* item = current->getChild();
 
-    current = update->getChild();
+        while (item != nullptr){
+            JsonValue* field = document->find(item->getKey());
 
-    while (current != nullptr){
-        bool success = false;
-        string op = current->getKey();
+            if (field == nullptr){
+                cerr << "Field not found: " << item->getKey() << endl;
+                return false;
+            }
 
-        if (op == "$set") {
-            success = aplySet(document, current);
-        }
-        else if (op == "$inc") {
-            success = aplyInc(document, current);
-        }
-        else if (op == "$push") {
-            success = aplyPush(document, current);
-        }
+            if (op == "$set"){
+                if (field->getType() != item->getType() || !field->copyFrom(item)){
+                    cerr << "Invalid $set value" << endl;
+                    return false;
+                }
+            }
+            else if (op == "$inc"){
+                int32_t a, b;
 
-        if (!success) {
-            cerr << "Update failed: " << op << endl;
-            return false;
-        }
+                if (field->getType() != JSON_INT || item->getType() != JSON_INT || !parseInt32(field->getValue(), a) || !parseInt32(item->getValue(), b)){
+                    cerr << "Invalid $inc value" << endl;
+                    return false;
+                }
 
-        current = current->getNext();
-    }
+                if ((b > 0 && a > INT32_MAX - b) || (b < 0 && a < INT32_MIN - b)){
+                    cerr << "Integer overflow" << endl;
+                    return false;
+                }
 
-    return true;
-}
+                field->setInt(a + b);
+            }
+            else if (op == "$push"){
+                if (field->getType() != JSON_ARRAY){
+                    cerr << "$push requires an array" << endl;
+                    return false;
+                }
 
+                JsonValue* element = new JsonValue();
 
-bool Storage::aplySet(JsonValue* document, const JsonValue* fields) const {
-    if (document == nullptr || fields == nullptr) {
-        return false;
-    }
+                if (!element->copyFrom(item)){
+                    delete element;
+                    return false;
+                }
 
-    if (document->getType() != JSON_OBJECT || fields->getType() != JSON_OBJECT) {
-        cerr << "Invalid $set arguments" << endl;
-        return false;
-    }
+                element->setKey("");
+                field->addChild(element);
+            }
 
-    const JsonValue* current = fields->getChild();
-
-    while (current != nullptr) {
-        JsonValue* field = document->find(current->getKey());
-
-        if (field == nullptr) {
-            cerr << "Field not found: "
-                 << current->getKey() << endl;
-            return false;
-        }
-
-        if (field->getType() != current->getType()) {
-            cerr << "Type mismatch for field: "
-                 << current->getKey() << endl;
-            return false;
-        }
-
-        current = current->getNext();
-    }
-
-    current = fields->getChild();
-
-    while (current != nullptr){
-        JsonValue* field = document->find(current->getKey());
-
-        if (!field->copyFrom(current)){
-            cerr << "Cannot update field: " << current->getKey() << endl;
-            return false;
+            item = item->getNext();
         }
 
         current = current->getNext();
@@ -776,289 +794,97 @@ bool Storage::aplySet(JsonValue* document, const JsonValue* fields) const {
 }
 
 
-bool Storage::aplyInc(JsonValue* document, const JsonValue* fields) const {
-    if (document == nullptr || fields == nullptr){
-        return false;
-    }
+bool Storage::updateOne(const string& collectionName, const JsonValue* filter, const JsonValue* update){
+    if (update == nullptr) return false;
+    return modifyInternal(collectionName, filter, update, false) == 1;
+}
 
-    if (document->getType() != JSON_OBJECT || fields->getType() != JSON_OBJECT) {
-        cerr << "Invalid $inc arguments" << endl;
-        return false;
-    }
-
-    const JsonValue* current = fields->getChild();
-
-    while (current != nullptr){
-        JsonValue* field = document->find(current->getKey());
-
-        if (field == nullptr || field->getType() != JSON_INT || current->getType() != JSON_INT){
-            cerr << "Invalid integer field: " << current->getKey() << endl;
-            return false;
-        }
-
-        int32_t oldValue;
-        int32_t increment;
-
-        if (!parseInt32(field->getValue(), oldValue) || !parseInt32(current->getValue(), increment)){
-            cerr << "Invalid integer value" << endl;
-            return false;
-        }
-
-        if ((increment > 0 && oldValue > INT32_MAX - increment) || (increment < 0 && oldValue < INT32_MIN - increment)){
-            cerr << "Integer overflow: " << current->getKey() << endl;
-            return false;
-        }
-
-        current = current->getNext();
-    }
-
-    current = fields->getChild();
-
-    while (current != nullptr) {
-        JsonValue* field = document->find(current->getKey());
-
-        int32_t oldValue;
-        int32_t increment;
-
-        parseInt32(field->getValue(), oldValue);
-        parseInt32(current->getValue(), increment);
-
-        field->setInt(oldValue + increment);
-
-        current = current->getNext();
-    }
-
-    return true;
+int Storage::updateMany(const string& collectionName, const JsonValue* filter, const JsonValue* update){
+    if (update == nullptr) return -1;
+    return modifyInternal(collectionName, filter, update, true);
 }
 
 
-bool Storage::aplyPush(JsonValue* document, const JsonValue* fields) const {
-    if (document == nullptr || fields == nullptr) {
-        return false;
-    }
-
-    if (document->getType() != JSON_OBJECT || fields->getType() != JSON_OBJECT) {
-        cerr << "Invalid $push arguments" << endl;
-        return false;
-    }
-
-    const JsonValue* current = fields->getChild();
-
-    while (current != nullptr){
-        JsonValue* field = document->find(current->getKey());
-
-        if (field == nullptr){
-            cerr << "Field not found: " << current->getKey() << endl;
-            return false;
-        }
-
-        if (field->getType() != JSON_ARRAY){
-            cerr << "$push requires an array: " << current->getKey() << endl;
-            return false;
-        }
-
-        current = current->getNext();
-    }
-
-    current = fields->getChild();
-
-    while (current != nullptr){
-        JsonValue* field = document->find(current->getKey());
-
-        JsonValue* newElement = new JsonValue();
-
-        if (!newElement->copyFrom(current)){
-            delete newElement;
-            cerr << "Cannot copy $push element" << endl;
-            return false;
-        }
-
-        newElement->setKey("");
-
-        field->addChild(newElement);
-
-        current = current->getNext();
-    }
-
-    return true;
-}
-
-bool Storage::updateOne(const string& collectionName, const JsonValue* filter, const JsonValue* update) {
-    return updateInternal(collectionName, filter, update, false) == 1;
-}
-
-int Storage::updateMany(const string& collectionName, const JsonValue* filter, const JsonValue* update) {
-    return updateInternal(collectionName, filter, update, true);
-}
-
-int Storage::updateInternal(const string& collectionName, const JsonValue* filter, const JsonValue* update, bool multi){
+int Storage::modifyInternal(const string& collectionName, const JsonValue* filter, const JsonValue* update, bool multi){
     if (schema == nullptr) return -1;
+
     Collection* collection = schema->findCollection(collectionName);
 
     if (collection == nullptr){
         cerr << "Collection not found: " << collectionName << endl;
         return -1;
     }
-    if (filter == nullptr || filter->getType() != JSON_OBJECT || update == nullptr || update->getType() != JSON_OBJECT){
-        cerr << "Invalid update arguments" << endl;
+
+    if (filter == nullptr || filter->getType() != JSON_OBJECT || (update != nullptr && update->getType() != JSON_OBJECT)){
+        cerr << "Invalid modification arguments" << endl;
         return -1;
     }
 
-    int updateCount = 0;
+    int count = 0;
     int fileNumber = 1;
 
-    while(true){
+    while (true){
         string filename = getFilePath(collectionName, fileNumber);
-        if (!fileExists(filename)){
-            break;
-        }
+
+        if (!fileExists(filename)) break;
 
         JsonValue* root = storageLoadFile(filename);
-        if (root == nullptr) {
-            return -1;
-        }
+
+        if (root == nullptr) return -1;
 
         bool fileChanged = false;
         JsonValue* current = root->getChild();
 
-        while(current != nullptr){
-            if(matchesFilter(current, filter)){
-                JsonValue* copy = new JsonValue();
-
-                if (!copy->copyFrom(current)){
-                    delete copy;
-                    delete root;
-                    return -1;
-                }
-
-                if (!aplyUpdate(copy, update)){
-                    delete copy;
-                    delete root;
-                    return -1;
-                }
-
-                if (!validateDocument(collection, copy)){
-                    cerr << "Updated document violates schema" << endl;
-                    delete copy;
-                    delete root;
-                    return -1;
-                }
-
-                if (!current->copyFrom(copy)){
-                    delete copy;
-                    delete root;
-                    return -1;
-                }
-
-                delete copy;
-
-                fileChanged = true;
-                updateCount++;
-
-                if(!multi) break;
-            }
-            current = current->getNext();
-        }
-
-        if (fileChanged){
-            string content = JsonParser::stringify(root);
-
-            if (!writeFile(filename, content)) {
-                cerr << "Cannot save updated file: " << filename << endl;
-                delete root;
-                return -1;
-            }
-        }
-
-        delete root;
-
-        if (!multi && updateCount > 0) {
-            return updateCount;
-        }
-        fileNumber++;
-    }
-    return updateCount;
-}
-
-int Storage::deleteInternal(const string& collectionName, const JsonValue* filter, bool multi){
-    if (schema == nullptr) return -1;
-
-    if (!schema->findCollection(collectionName)){
-        cerr << "Collection not found: " << collectionName << endl;
-        return -1;
-    }
-
-    if (filter == nullptr || filter->getType() != JSON_OBJECT){
-        cerr << "Invalid delete filter" << endl;
-        return -1;
-    }
-
-    int deletedCount = 0;
-    int fileNumber = 1;
-
-    while(true){
-        string filename = getFilePath(collectionName, fileNumber);
-
-        if (!fileExists(filename)){
-            break;
-        }
-
-        JsonValue* root = storageLoadFile(filename);
-        if (root == nullptr){
-            return -1;
-        }
-
-        bool fileChanged = false;
-        int deletedInFile = 0;
-
-        JsonValue* current = root->getChild();
-
-        while(current != nullptr){
+        while (current != nullptr){
             JsonValue* next = current->getNext();
 
-            if(matchesFilter(current, filter)){
-                if (!root->removeChild(current)){
-                    cerr << "Cannot delete document" << endl;
+            if (matchesFilter(current, filter)){
+                bool success;
+
+                if (update == nullptr){
+                    success = root->removeChild(current);
+                }
+                else{
+                    success = aplyUpdate(current, update) && validateDocument(collection, current);
+                }
+
+                if (!success){
+                    cerr << "Document modification failed" << endl;
                     delete root;
                     return -1;
                 }
 
                 fileChanged = true;
-                deletedInFile++;
+                count++;
 
-                if(!multi) break;
+                if (!multi) break;
             }
+
             current = next;
         }
 
-        if (fileChanged){
-            string content = JsonParser::stringify(root);
-
-            if (!writeFile(filename, content)) {
-                cerr << "Cannot save file: " << filename << endl;
-                delete root;
-                return -1;
-            }
-
-            deletedCount += deletedInFile;
+        if (fileChanged && !writeFile(filename, JsonParser::stringify(root))){
+            delete root;
+            return -1;
         }
 
         delete root;
 
-        if (!multi && deletedCount > 0){
-            return deletedCount;
-        }
+        if (!multi && count > 0) break;
+
         fileNumber++;
     }
-    return deletedCount;
+
+    return count;
 }
+
 
 bool Storage::deleteOne(const string& collectionName, const JsonValue* filter){
-    return deleteInternal(collectionName, filter, false) == 1;
+    return modifyInternal(collectionName, filter, nullptr, false) == 1;
 }
 
-int Storage::deleteMany(const string& collectionName, const JsonValue* filter) {
-    return deleteInternal(collectionName, filter, true);
+int Storage::deleteMany(const string& collectionName, const JsonValue* filter){
+    return modifyInternal(collectionName, filter, nullptr, true);
 }
 
 int Storage::compareDocument(const JsonValue* first, const JsonValue* second, const string& sortField) const {
@@ -1152,9 +978,8 @@ int Storage::findSorted(const string& collectionName, const JsonValue* filter, i
     while (runCount > 1){
 
         int newRunCount = 0;
-        int i = 1;
 
-        while (i <= runCount){
+        for (int i = 1; i <= runCount; i += 2){
 
             string firstFilename = getSortFilePath(collectionName, pass, i);
 
@@ -1168,7 +993,6 @@ int Storage::findSorted(const string& collectionName, const JsonValue* filter, i
                     cleanupSortFiles(collectionName, initialRunCount);
                     return -1;
                 }
-                i++;
 
             } else {
                 string secondFilename = getSortFilePath(collectionName, pass, i + 1);
@@ -1180,7 +1004,6 @@ int Storage::findSorted(const string& collectionName, const JsonValue* filter, i
 
                 std::remove(firstFilename.c_str());
                 std::remove(secondFilename.c_str());
-                i += 2;
             }
             newRunCount++;
         }
@@ -1239,150 +1062,73 @@ int Storage::findSorted(const string& collectionName, const JsonValue* filter, i
     return foundCount;
 }
 
-Storage::SortNode* Storage::splitSortList(SortNode* head) const {
-    if (head == nullptr || head->next == nullptr) return nullptr;
 
-    SortNode* slow = head;
-    SortNode* fast = head->next;
-
-    while(fast != nullptr && fast->next != nullptr){
-        slow = slow->next;
-        fast = fast->next->next;
-    }
-
-    SortNode* second = slow->next;
-    slow->next = nullptr;
-
-    return second;
-}
-
-Storage::SortNode* Storage::mergeSortLists(SortNode* first, SortNode* second, const string& sortField, bool ascending) const {
-    SortNode dummy;
-    dummy.document = nullptr;
-    dummy.next = nullptr;
-
-    SortNode* tail = &dummy;
-
-    while(first != nullptr && second != nullptr){
-        int cmp = compareDocument(first->document, second->document, sortField);
-        
-        bool takeFirst;
-
-        if (ascending){
-            takeFirst = (cmp <= 0);
-        }else{
-            takeFirst = (cmp >= 0);
-        }
-
-        if (takeFirst){
-            tail->next = first;
-            first = first->next;
-        }else{
-            tail->next = second;
-            second = second->next;
-        }
-        tail = tail->next;
-    }
-    if (first != nullptr){
-        tail->next = first;
-    }else{
-        tail->next = second;
-    }
-    return dummy.next;
-}
-
-Storage::SortNode* Storage::mergeSort(SortNode* head, const string& sortField, bool ascending) const {
-    if (head == nullptr || head->next == nullptr){
-        return head;
-    }
-
-    SortNode* second = splitSortList(head);
-    head = mergeSort(head, sortField, ascending);
-    second = mergeSort(second, sortField, ascending);
-    return mergeSortLists(head, second, sortField, ascending);
-}
-
-void Storage::freeSortList(SortNode* head) const {
-    while(head != nullptr){
-        SortNode* next = head->next;
-        delete head;
-        head = next;
-    }
-}
 
 int Storage::createSortedRun(const string& filename, const string& tempFilename, const JsonValue* filter, const string& sortField, bool ascending) const {
     JsonValue* root = storageLoadFile(filename);
 
-    if (root == nullptr){
-        return -1;
-    }
+    if (root == nullptr) return -1;
 
-    SortNode* head = nullptr;
-    SortNode* tail = nullptr;
-
-    int count = 0;
-
+    int capacity = 0;
     const JsonValue* current = root->getChild();
 
     while (current != nullptr){
+        capacity++;
+        current = current->getNext();
+    }
+
+    const JsonValue** documents = new const JsonValue*[capacity];
+
+    int count = 0;
+    current = root->getChild();
+
+    while (current != nullptr){
         if (matchesFilter(current, filter)){
-
-            SortNode* node = new SortNode();
-
-            node->document = current;
-            node->next = nullptr;
-
-            if (head == nullptr){
-                head = node;
-            } else {
-                tail->next = node;
-            }
-
-            tail = node;
-            count++;
+            documents[count++] = current;
         }
 
         current = current->getNext();
     }
 
-    head = mergeSort(head, sortField, ascending);
+    for (int i = 1; i < count; i++){
+        const JsonValue* key = documents[i];
+        int j = i - 1;
 
-    ofstream out(tempFilename);
+        while (j >= 0){
+            int cmp = compareDocument(documents[j], key, sortField);
 
-    if (!out.is_open()){
-        cerr << "Cannot create temporary file" << endl;
+            if ((ascending && cmp <= 0) || (!ascending && cmp >= 0)){
+                break;
+            }
 
-        freeSortList(head);
-        delete root;
+            documents[j + 1] = documents[j];
+            j--;
+        }
 
-        return -1;
+        documents[j + 1] = key;
     }
 
-    SortNode* node = head;
+    ofstream out(tempFilename);
+    bool success = out.is_open();
 
-    while (node != nullptr){
-
-        JsonValue key(node->document->getKey());
-
-        out << JsonParser::stringify(&key) << '\n';
-        out << JsonParser::stringify(node->document) << '\n';
-
-        node = node->next;
+    for (int i = 0; i < count && success; i++){
+        success = writeSortedDocument(out, documents[i]);
     }
 
     out.close();
+    success = success && !out.fail();
 
-    bool success = !out.fail();
-
-    freeSortList(head);
+    delete[] documents;
     delete root;
 
-    if (!success) {
+    if (!success){
         cerr << "Cannot write temporary file" << endl;
         return -1;
     }
+
     return count;
 }
+
 
 
 int Storage::readSortedDocument(ifstream& file, JsonValue*& document) const {
@@ -1441,16 +1187,10 @@ bool Storage::writeSortedDocument(ofstream& file, const JsonValue* document) con
 bool Storage::mergeSortedRuns(const string& firstFilename, const string& secondFilename, const string& outputFilename, const string& sortField, bool ascending) const {
     ifstream firstFile(firstFilename);
     ifstream secondFile(secondFilename);
-
-    if (!firstFile.is_open() || !secondFile.is_open()){
-        cerr << "Cannot open sorted files" << endl;
-        return false;
-    }
-
     ofstream outputFile(outputFilename);
 
-    if (!outputFile.is_open()) {
-        cerr << "Cannot create merged file" << endl;
+    if (!firstFile.is_open() || !secondFile.is_open() || !outputFile.is_open()){
+        cerr << "Cannot open sorted files" << endl;
         return false;
     }
 
@@ -1458,74 +1198,49 @@ bool Storage::mergeSortedRuns(const string& firstFilename, const string& secondF
     JsonValue* second = nullptr;
 
     int firstStatus = readSortedDocument(firstFile, first);
-
     int secondStatus = readSortedDocument(secondFile, second);
 
     bool success = true;
 
-    while (firstStatus == 1 || secondStatus == 1){
-        if (firstStatus == -1 || secondStatus == -1){
-            success = false;
-            break;
-        }
+    while (firstStatus >= 0 && secondStatus >= 0 && (firstStatus == 1 || secondStatus == 1)){
         bool takeFirst;
+
         if (firstStatus == 0){
             takeFirst = false;
         }
         else if (secondStatus == 0){
             takeFirst = true;
         }
-        else {
+        else{
             int cmp = compareDocument(first, second, sortField);
-            if (ascending){
-                takeFirst = (cmp <= 0);
-            } else {
-                takeFirst = (cmp >= 0);
-            }
+            takeFirst = ascending ? cmp <= 0 : cmp >= 0;
         }
-        if (takeFirst) {
-            if (!writeSortedDocument(outputFile, first)){
-                success = false;
-                break;
-            }
 
-            delete first;
-            first = nullptr;
+        JsonValue*& document = takeFirst ? first : second;
+        ifstream& file = takeFirst ? firstFile : secondFile;
+        int& status = takeFirst ? firstStatus : secondStatus;
 
-            firstStatus = readSortedDocument(
-                firstFile, first
-            );
-
-        } else {
-
-            if (!writeSortedDocument(outputFile, second)) {
-                success = false;
-                break;
-            }
-
-            delete second;
-            second = nullptr;
-
-            secondStatus = readSortedDocument(secondFile, second);
+        if (!writeSortedDocument(outputFile, document)){
+            success = false;
+            break;
         }
-    }
 
-    if (firstStatus == -1 || secondStatus == -1){
-        success = false;
+        delete document;
+        document = nullptr;
+
+        status = readSortedDocument(file, document);
     }
 
     delete first;
     delete second;
 
-    firstFile.close();
-    secondFile.close();
     outputFile.close();
 
-    if (outputFile.fail()){
+    if (firstStatus < 0 || secondStatus < 0 || outputFile.fail()){
         success = false;
     }
 
-    if (!success) {
+    if (!success){
         cerr << "Error merging sorted files" << endl;
     }
 

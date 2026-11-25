@@ -4,6 +4,7 @@
 #include <cstdio>
 #include "schema.hpp"
 #include "document.hpp"
+#include "list.hpp"
 
 enum KeySearchResult {
     KEY_NOT_FOUND,
@@ -30,22 +31,10 @@ private:
     void printDocument(const JsonValue* document, const List* projection) const;
     JsonValue* storageLoadFile(const std::string& filename) const;
     bool aplyUpdate(JsonValue* document, const JsonValue* update) const;
-    bool aplySet(JsonValue* document, const JsonValue* fields) const;
-    bool aplyInc(JsonValue* document, const JsonValue* fields) const;
-    bool aplyPush(JsonValue* document, const JsonValue* fields) const;
-    int updateInternal(const std::string& collectionName, const JsonValue* filter, const JsonValue* update, bool multi);
-    int deleteInternal(const std::string& collectionName, const JsonValue* filter, bool multi);
+    int modifyInternal(const std::string& collectionName, const JsonValue* filter, const JsonValue* update, bool multi);
     int compareDocument(const JsonValue* first, const JsonValue* second, const std::string& sortField) const;
-
-    struct SortNode{
-        const JsonValue* document;
-        SortNode* next;
-    };
-
-    SortNode* splitSortList(SortNode* head) const;
-    SortNode* mergeSortLists(SortNode* first, SortNode* second, const std::string& sortField, bool ascending) const;
-    SortNode* mergeSort(SortNode* head, const std::string& sortField, bool ascending) const;
-    void freeSortList(SortNode* head) const;
+    bool validateFields(const JsonValue* fields, const JsonValue* document) const;
+    std::string generateKey(const std::string& collectionName) const;
     int createSortedRun(const std::string& filename, const std::string& tempFilename, const JsonValue* filter, const std::string& sortField, bool ascending) const;
     int readSortedDocument(std::ifstream& file, JsonValue*& document) const;
     bool mergeSortedRuns(const std::string& firstFilename, const std::string& secondFilename, const std::string& outputFilename, const std::string& sortField, bool ascending) const;
@@ -63,4 +52,5 @@ public:
     bool deleteOne(const std::string& collectionName, const JsonValue* filter);
     int deleteMany(const std::string& collectionName, const JsonValue* filter);
     int findSorted(const std::string& collectionName, const JsonValue* filter, int limit, const List* projection, const std::string& sortField, bool acsending) const;
+    bool insertOne(const std::string& collectionName, const JsonValue* document);
 };

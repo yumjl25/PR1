@@ -1,68 +1,48 @@
+
 #pragma once
 #include <string>
-#include <fstream>
-#include <iostream>
-#include "list.hpp"
+#include "document.hpp"
 
-struct Field{
-    std::string name;
-    std::string type;
-    Field(const std::string& n, const std::string& t) : name(n), type(t) {}
-};
-
-class Collection{
+class Collection {
 private:
     std::string name;
-    List fields;
+    JsonValue fields;
+
+    const JsonValue* getField(int index) const;
+
 public:
-    Collection() : name("") {}
-    Collection(const std::string& n) : name(n) {}
-    
-    void setName(const std::string& n) {name = n;}
-    std::string getName() const {return name;}
+    Collection();
+    Collection(const std::string& n);
 
-    void addField(const std::string& fieldName, const std::string& typeName){
-        fields.pushTail(fieldName + ":" + typeName);
-    }
+    void setName(const std::string& n);
+    std::string getName() const;
 
-    int getFieldCount() const {return fields.getSize();}
+    void addField(const std::string& fieldName, const std::string& typeName);
 
-    std::string getFieldName(int index) const {
-        std::string out;
-        if (fields.getAt(index, out)){
-            size_t pos = out.find(':');
-            if (pos != std::string::npos){
-                return out.substr(0, pos);
-            }
-        }
-        return "";
-    }
+    int getFieldCount() const;
+    std::string getFieldName(int index) const;
+    std::string getFieldType(int index) const;
 
-    std::string getFieldType(int index) const {
-        std::string out;
-        if (fields.getAt(index, out)){
-            size_t pos = out.find(':');
-            if (pos != std::string::npos){
-                return out.substr(pos + 1);
-            }
-        }
-        return "";
-    }
+    bool setFields(const JsonValue* source);
+    const JsonValue* getFields() const;
 };
 
-class Schema{
+class Schema {
 private:
     std::string name;
     int tuples_limit;
 
-    List collection_names;
-
-    static const int MAX_COLLECTIONS = 10;
-    Collection* collections[MAX_COLLECTIONS];
+    Collection** collections;
     int collection_count;
+
+    void clear();
+
 public:
     Schema();
     ~Schema();
+
+    Schema(const Schema&) = delete;
+    Schema& operator=(const Schema&) = delete;
 
     std::string getName() const {return name;}
     int getTuplesLimit() const {return tuples_limit;}
@@ -70,8 +50,7 @@ public:
 
     Collection* getCollection(int index) const;
     Collection* findCollection(const std::string& collName) const;
-    
-    bool loadFromFile(const std::string& filename);
 
+    bool loadFromFile(const std::string& filename);
     void createDirectories();
 };
